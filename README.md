@@ -113,6 +113,10 @@ Open the repository folder. `Ctrl+Shift+B` builds; *Run Task* has the watch buil
 
 `node vscode-hourglass/install.js` installs the repository's own extension (then restart VS Code): hover a string of pixel art to see it drawn, a palette name (`C.TAN`) to see the colour, or a cast id (`['say', 'russo', …]`) to see the doll and the portrait; story-check problems appear as you save. See [`vscode-hourglass/README.md`](vscode-hourglass/README.md).
 
+### Claude Code
+
+`CLAUDE.md` holds the working notes for Claude; `.claude/skills/` has `/new-room`, `/new-character` and `/story-beat`; the hook in `.claude/settings.json` rebuilds and story-checks after every edit.
+
 How the code is written, and the rules for changing it: [`docs/code-style.md`](docs/code-style.md).
 
 ## Credits
