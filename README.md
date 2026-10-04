@@ -91,6 +91,14 @@ npm run test:level    # bot playthrough of the chase and fight, interactions, me
 
 `node tools/tl.js tests/<file>.json` runs a single test of the test level, and `node tools/run.js tests/<file>.json` does the same for the adventure. Screenshots are written to `shots/`.
 
+### Story check
+
+`npm run check` reads the adventure's rooms and story and reports broken references with file and line: exits and
+room changes to missing rooms or onto ground Frank can't stand on, speakers who aren't in the cast, clues and items
+that don't exist, flags that are read but never set, clues nobody can find, and deductions that decide nothing.
+Warnings already accepted for Act I are kept in `tools/story_check.known.json` (`--accept` rewrites it), so only new
+problems show. In Claude Code, `.claude/hooks/after_edit.js` rebuilds the game and runs the check after every edit.
+
 How the code is written, and the rules for changing it: [`docs/code-style.md`](docs/code-style.md).
 
 ## Credits

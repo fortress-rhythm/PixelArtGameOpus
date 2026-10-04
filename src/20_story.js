@@ -86,7 +86,8 @@ clue('blue_suit', 'A man in a blue suit', "Sal: a man in a blue suit went into t
 clue('rook_refused', 'Rook refused her story', "Evelyn brought Chester Rook a story about the Asterion plant. He wouldn't print it without proof.");
 
 // =================================================================== STORY: DEDUCTIONS
-function ded(id, a, b, title, text, then, need, needText) { DEDS.push({ id, a, b, title, text, then, need, needText }); }
+// returns the deduction, so a story can write ded(...).optional = true for one that only adds flavour (the story check)
+function ded(id, a, b, title, text, then, need, needText) { const d = { id, a, b, title, text, then, need, needText }; DEDS.push(d); return d; }
 ded('d_window', 'wet_patches', 'mopped_six', 'Delivered after six', "The landing was mopped at six. Somebody stood dripping at my door after that, and was gone before ten to seven.");
 ded('d_inside', 'dry_envelope', 'street_door', 'Never came off the street', "A dry envelope and a locked street door. Whoever brought it never came in from the street.");
 ded('d_roof', 'd_inside', 'roof_hatch', 'Came down from the roof', "They came across the roofs and down through the hatch. They knew the building. And they stood at my door long enough to drip.");

@@ -42,9 +42,11 @@ something three files away without any warning.
 5. **Pure parts get unit tests.** Projection, lighting, the people builder, pathfinding and the notebook have
    tests in `tests/unit/` that load the sources in Node (`tools/load_game.js`). If you change how the existing
    cast is drawn on purpose, accept the new frames with `UPDATE_GOLDEN=1 npm run test:unit` and say so in the commit.
-6. **Rebuild before committing.** The built `.html` files are committed; `tests/unit/build.test.js` fails if they
+6. **The story check must pass.** `npm run check` (also run by the Claude hook after every edit, and by
+   `npm test`). It reports new problems only; the existing Act I warnings are listed in `tools/story_check.known.json`.
+7. **Rebuild before committing.** The built `.html` files are committed; `tests/unit/build.test.js` fails if they
    are stale. `npm run watch` rebuilds on every save.
-7. **No new globals by accident.** Everything is global, so prefix a new subsystem's names (`edit…`, `EDIT`,
+8. **No new globals by accident.** Everything is global, so prefix a new subsystem's names (`edit…`, `EDIT`,
    `portrait…`) and check `Ctrl+T` in VS Code for the name before you take it.
 
 ## Editor support

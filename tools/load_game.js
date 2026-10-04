@@ -3,6 +3,7 @@
 // pathfinding, story data, script runner) to work. Nothing is drawn to a real screen.
 //   const g = loadGame();                 the whole adventure (src/*.js), init() not run
 //   const g = loadGame({ files: [...] }); only these sources, in this order
+//   const g = loadGame({ override: { 'src/20_story.js': text } });   a source replaced by other text (checker tests)
 // Every top-level name the sources declare is reachable as g.NAME (looked up lazily in the shared scope).
 const fs = require('fs'), path = require('path'), vm = require('vm');
 const ROOT = path.join(__dirname, '..');
@@ -35,7 +36,7 @@ function loadGame(opts) {
   const files = opts.files || fs.readdirSync(path.join(ROOT, 'src')).filter(f => f.endsWith('.js')).sort().map(f => 'src/' + f);
   let code = '';
   for (const f of files) {
-    let s = fs.readFileSync(path.join(ROOT, f), 'utf8');
+    let s = opts.override && f in opts.override ? opts.override[f] : fs.readFileSync(path.join(ROOT, f), 'utf8');
     if (f.endsWith('90_main.js')) s = s.replace(/\ninit\(\);\s*$/, '\n');       // load everything, start nothing
     code += s + '\n';
   }

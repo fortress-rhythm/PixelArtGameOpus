@@ -1,0 +1,18 @@
+[
+ "deduction 'd_bluesuit' decides nothing: no hasClue('d_bluesuit') and no deduction builds on it (mark it optional if that's intended)",
+ "deduction 'd_cold' decides nothing: no hasClue('d_cold') and no deduction builds on it (mark it optional if that's intended)",
+ "deduction 'd_federal' decides nothing: no hasClue('d_federal') and no deduction builds on it (mark it optional if that's intended)",
+ "deduction 'd_hotel' decides nothing: no hasClue('d_hotel') and no deduction builds on it (mark it optional if that's intended)",
+ "deduction 'd_map' decides nothing: no hasClue('d_map') and no deduction builds on it (mark it optional if that's intended)",
+ "deduction 'd_notmickey' decides nothing: no hasClue('d_notmickey') and no deduction builds on it (mark it optional if that's intended)",
+ "deduction 'd_notmob' decides nothing: no hasClue('d_notmob') and no deduction builds on it (mark it optional if that's intended)",
+ "deduction 'd_rime' decides nothing: no hasClue('d_rime') and no deduction builds on it (mark it optional if that's intended)",
+ "deduction 'd_roof' decides nothing: no hasClue('d_roof') and no deduction builds on it (mark it optional if that's intended)",
+ "deduction 'd_sedan' decides nothing: no hasClue('d_sedan') and no deduction builds on it (mark it optional if that's intended)",
+ "deduction 'd_sky' decides nothing: no hasClue('d_sky') and no deduction builds on it (mark it optional if that's intended)",
+ "deduction 'd_skyopened' decides nothing: no hasClue('d_skyopened') and no deduction builds on it (mark it optional if that's intended)",
+ "deduction 'd_stairs' decides nothing: no hasClue('d_stairs') and no deduction builds on it (mark it optional if that's intended)",
+ "deduction 'd_stranger' decides nothing: no hasClue('d_stranger') and no deduction builds on it (mark it optional if that's intended)",
+ "deduction 'd_tomorrow' decides nothing: no hasClue('d_tomorrow') and no deduction builds on it (mark it optional if that's intended)",
+ "deduction 'd_window' decides nothing: no hasClue('d_window') and no deduction builds on it (mark it optional if that's intended)"
+]
