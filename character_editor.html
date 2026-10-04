@@ -1,0 +1,1361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hourglass Character Editor</title>
+<style>
+  /* One dark look on purpose: the game's own ink and lamplight, so colours are judged against the game's darkness. */
+  :root { color-scheme: dark; --bg: #0f0d14; --panel: #17141f; --line: #2c2838; --fg: #e9e2d0; --muted: #a59eae; --accent: #f2b86e; --stage: #07060a;
+          --mono: ui-monospace, "Cascadia Mono", Consolas, "JetBrains Mono", monospace; --sans: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 14px/1.45 var(--sans); }
+  .app { display: grid; grid-template-columns: minmax(280px, 340px) 1fr; height: 100%; }
+  .side { border-right: 1px solid var(--line); overflow-y: auto; padding: 12px 14px 40px; background: var(--panel); }
+  .main { overflow-y: auto; padding: 14px 18px 40px; display: grid; gap: 14px; align-content: start;
+          grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); }
+  h1 { font: 600 15px/1.2 var(--mono); letter-spacing: .04em; margin: 2px 0 10px; color: var(--accent); }
+  h2 { font: 600 11px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin: 18px 0 8px; }
+  .row { display: grid; grid-template-columns: 92px 1fr 34px; gap: 8px; align-items: center; margin: 5px 0; }
+  .row label { color: var(--muted); font-size: 12.5px; }
+  .row output { font: 12px var(--mono); color: var(--fg); text-align: right; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  select, input[type=text], textarea, button { font: 12.5px var(--mono); background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; }
+  select { width: 100%; }
+  button { cursor: pointer; padding: 5px 9px; }
+  button:hover, select:hover { border-color: var(--accent); }
+  button[aria-pressed=true] { border-color: var(--accent); color: var(--accent); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .checks { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12.5px; }
+  .checks label { display: flex; gap: 5px; align-items: center; color: var(--fg); }
+  .slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 4px 10px; }
+  .slot { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); cursor: pointer; background: none; border: 0; padding: 2px; text-align: left; }
+  .slot b { font: 600 12px var(--mono); color: var(--fg); width: 12px; }
+  .sw { width: 18px; height: 18px; border-radius: 3px; border: 1px solid var(--line); flex: none; }
+  .palette { display: grid; grid-template-columns: repeat(10, 1fr); gap: 3px; margin: 8px 0; padding: 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 5px; }
+  .palette button { aspect-ratio: 1; padding: 0; border-radius: 3px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; min-width: 0; }
+  .card h2 { margin-top: 0; }
+  .stage { background: var(--stage); border-radius: 5px; padding: 10px; overflow-x: auto; }
+  canvas { image-rendering: pixelated; image-rendering: crisp-edges; display: block; }
+  .note { font-size: 12px; color: var(--muted); margin: 8px 0 0; }
+  .btns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  textarea { width: 100%; min-height: 150px; resize: vertical; white-space: pre; }
+  .wide { grid-column: 1 / -1; }
+  .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--accent); color: #141119; padding: 6px 12px; border-radius: 4px; font: 600 13px var(--mono); }
+  @media (max-width: 760px) { .app { grid-template-columns: 1fr; height: auto; } .side { border-right: 0; border-bottom: 1px solid var(--line); } }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side" id="side" aria-label="Character settings"></aside>
+  <main class="main" id="main"></main>
+</div>
+<div class="toast" id="toast" hidden></div>
+<script>
+'use strict';
+'use strict';
+
+// ------------------------------------------------------------------ constants
+const W = 320, H = 180;
+const FPS = 60, DT = 1 / FPS;
+const TAU = Math.PI * 2;
+const T = 255;                         // transparent index in sprite buffers
+
+// ------------------------------------------------------------------ palette (60)
+const PAL_HEX = [
+  '07060a', '141119',                                   //  0 black, 1 ink
+  '1b1a2a', '2c3246', '4b4659', '86615f', 'c2744c',     //  2-6 night navy, slate, violet grey, mauve, amber
+  'f2b86e', 'fff0cf',                                   //  7 glow, 8 hot
+  '3a3446',                                             //  9 violet dark
+  'a7adb6',                                             // 10 haze
+  '121822', '273041',                                   // 11-12 deep water / police navy
+  '25243a', '36354b',                                   // 13-14 distant towers
+  'd9443a',                                             // 15 neon red
+  '5ad1d2', '2b7580',                                   // 16-17 fusion cyan
+  '121c1d', '213632', '475838', '8d8b4c',               // 18-21 greens
+  '2b2a33', '4b4955', '7b6e66',                         // 22-24 stone
+  '7d6752', '4d392b', '24180f',                         // 25-27 tan, brown, dark brown
+  '333a46', '626c79', '9ca7b1', 'd6dfe3',               // 28-31 steel -> chrome
+  'a3303b', 'd8605c', 'e0973a', 'eed27c', '8b7cb4', 'efe6cf', // 32-37 crimson, coral, brass, pale yellow, lavender, cream
+  'd8c6a2', '6f7b82', '2a2532',                         // 38-40 stucco lit, stucco shadow, trim
+  'f1c7a0', 'c08a69', '744b47',                         // 41-43 skin
+  '3b2220', '70402c',                                   // 44-45 hair dark / auburn
+  '8a8c99',                                             // 46 cream shadow
+  '5c1a2b', '321526',                                   // 47-48 oxblood, plum
+  'ffffff', 'a8e6ee', '4a8db0',                         // 49-51 water
+  'ffc46b',                                             // 52 rim light
+  'a58b6c', '8a5a3a',                                   // 53 coat tan lit, 54 warm wood
+  '7fa8ff', '3a55b8',                                   // 55-56 Blue Comet neon
+  '9ff0c0',                                             // 57 the lights over the harbour
+  '9a6a4f', '5a3a30'                                    // 58-59 deeper skin mid / shadow
+];
+const C = {
+  BLK: 0, INK: 1, NAV: 2, SLT: 3, VIO: 4, MAU: 5, AMB: 6, GLOW: 7, HOT: 8, VDK: 9, HAZE: 10,
+  DW: 11, PNV: 12, TW0: 13, TW1: 14, RED: 15, CYAN: 16, CYD: 17,
+  G0: 18, G1: 19, G2: 20, G3: 21, ST0: 22, ST1: 23, ST2: 24, TAN: 25, BRN: 26, DBR: 27,
+  S0: 28, S1: 29, S2: 30, S3: 31, CRIM: 32, CORAL: 33, BRASS: 34, PALEY: 35, LAV: 36, CREAM: 37,
+  STL: 38, STS: 39, TRIM: 40, SKL: 41, SKM: 42, SKS: 43, HAIRD: 44, HAIRL: 45, CRS: 46,
+  OX: 47, PLUM: 48, WHITE: 49, WL: 50, WM: 51, RIM: 52, TANL: 53, WOOD: 54, NBL: 55, NBD: 56,
+  GRNL: 57, DSM: 58, DSS: 59
+};
+const NPAL = PAL_HEX.length;
+
+// ------------------------------------------------------------------ light ramps (palette remaps)
+function makeMap(pairs) {
+  const m = new Uint8Array(256);
+  for (let i = 0; i < 256; i++) m[i] = i;
+  for (let i = 0; i < pairs.length; i += 2) m[pairs[i]] = pairs[i + 1];
+  return m;
+}
+// warm light: one step brighter and warmer
+const LIT = makeMap([
+  0, 1, 1, 40, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 8, 9, 5, 10, 31, 11, 12, 12, 23, 13, 14, 14, 4,
+  15, 33, 16, 50, 17, 16, 18, 19, 19, 20, 20, 21, 21, 35, 22, 23, 23, 24, 24, 53,
+  25, 53, 26, 25, 27, 26, 28, 29, 29, 30, 30, 31, 31, 49, 32, 33, 33, 34, 34, 35, 35, 8, 36, 37,
+  37, 8, 38, 37, 39, 38, 40, 4, 41, 8, 42, 41, 43, 42, 44, 45, 45, 54, 46, 37, 47, 32, 48, 47,
+  49, 49, 50, 49, 51, 50, 52, 8, 53, 38, 54, 42, 55, 49, 56, 55, 57, 49, 58, 42, 59, 58
+]);
+// cool shadow: one step darker and cooler
+const SHD = makeMap([
+  0, 0, 1, 0, 2, 1, 3, 2, 4, 3, 5, 4, 6, 5, 7, 6, 8, 7, 9, 2, 10, 29, 11, 0, 12, 11, 13, 2, 14, 13,
+  15, 32, 16, 17, 17, 12, 18, 1, 19, 18, 20, 19, 21, 20, 22, 1, 23, 22, 24, 23,
+  25, 26, 26, 27, 27, 0, 28, 2, 29, 28, 30, 29, 31, 30, 32, 47, 33, 32, 34, 6, 35, 34, 36, 4,
+  37, 46, 38, 39, 39, 23, 40, 1, 41, 42, 42, 43, 43, 44, 44, 27, 45, 44, 46, 29, 47, 48, 48, 0,
+  49, 50, 50, 51, 51, 12, 52, 7, 53, 25, 54, 45, 55, 56, 56, 12, 57, 17, 58, 59, 59, 44
+]);
+function composeMap(a, b) { const m = new Uint8Array(256); for (let i = 0; i < 256; i++) m[i] = b[a[i]]; return m; }
+const LIT2 = composeMap(LIT, LIT), SHD2 = composeMap(SHD, SHD), SHD3 = composeMap(SHD2, SHD);
+// neon washes: dark surfaces pick up the colour of nearby tubes
+const REDW = makeMap([0, 48, 1, 48, 2, 48, 3, 47, 4, 47, 9, 47, 12, 47, 13, 48, 14, 47, 22, 48, 23, 47, 24, 33, 28, 47,
+  29, 32, 30, 33, 26, 47, 27, 48, 40, 48, 39, 32, 44, 47, 45, 32, 54, 32, 25, 33, 53, 33, 46, 33, 31, 33, 37, 33, 38, 33]);
+const BLUW = makeMap([0, 2, 1, 2, 2, 56, 3, 56, 4, 51, 9, 56, 12, 56, 13, 56, 14, 51, 22, 12, 23, 56, 24, 51, 28, 56,
+  29, 51, 30, 55, 26, 12, 27, 2, 40, 12, 39, 51, 44, 12, 45, 56, 54, 51, 25, 51, 53, 55, 46, 55, 31, 55, 37, 55, 38, 55]);
+const CYNW = makeMap([0, 11, 1, 11, 2, 17, 3, 17, 4, 17, 9, 17, 12, 17, 13, 17, 14, 17, 22, 17, 23, 17, 24, 16, 28, 17,
+  29, 16, 30, 50, 26, 17, 27, 11, 40, 17, 39, 16, 44, 17, 45, 17, 54, 17, 25, 16, 53, 16, 46, 16, 31, 50, 37, 50, 38, 50]);
+const GRNW = makeMap([0, 18, 1, 18, 2, 19, 3, 17, 4, 17, 9, 17, 12, 17, 13, 17, 14, 17, 22, 19, 23, 17, 24, 57, 28, 17,
+  29, 57, 30, 57, 31, 49, 26, 19, 27, 18, 40, 19, 39, 57, 37, 57, 38, 57, 5, 57, 6, 57, 7, 57, 8, 49]);
+// puddle / glossy reflection: darker, cooler, lights keep their colour
+const REFL = makeMap([
+  0, 0, 1, 0, 2, 1, 3, 2, 4, 3, 5, 4, 6, 5, 7, 6, 8, 7, 9, 2, 10, 29, 11, 0, 12, 11, 13, 2, 14, 13,
+  15, 15, 16, 17, 17, 12, 18, 1, 19, 18, 20, 19, 21, 20, 22, 1, 23, 22, 24, 23, 25, 26, 26, 27, 27, 0,
+  28, 2, 29, 28, 30, 29, 31, 30, 32, 47, 33, 32, 34, 34, 35, 34, 36, 4, 37, 46, 38, 39, 39, 23, 40, 1,
+  41, 42, 42, 43, 43, 44, 44, 27, 45, 44, 46, 29, 47, 48, 48, 0, 49, 50, 50, 51, 51, 12, 52, 7, 53, 25,
+  54, 45, 55, 55, 56, 56, 57, 57, 58, 59, 59, 44
+]);
+// panel darkening for UI overlays
+const DIM = composeMap(SHD2, SHD);
+
+// ------------------------------------------------------------------ math / noise helpers
+const BAYER = new Float32Array([0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map(v => (v + 0.5) / 16));
+function bay(x, y) { return BAYER[((y & 3) << 2) | (x & 3)]; }
+function hashi(a, b) {
+  let h = Math.imul(a | 0, 0x27d4eb2d) ^ Math.imul(b | 0, 0x165667b1) ^ 0x5bd1e995;
+  h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d);
+  h = Math.imul(h ^ (h >>> 12), 0x297a2d39);
+  return (h ^ (h >>> 15)) >>> 16;
+}
+function hash(a, b) { return hashi(a, b) * 1.52587890625e-5; }   // [0,1)
+function hash3(a, b, c) { return hash(a + Math.imul(c | 0, 0x9e37), b); }
+function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+function lerp(a, b, t) { return a + (b - a) * t; }
+function smooth(t) { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); }
+function frac(v) { return v - Math.floor(v); }
+// smooth value noise (2D)
+function vnoise(x, y, seed) {
+  const xi = Math.floor(x), yi = Math.floor(y), fx = x - xi, fy = y - yi;
+  const a = hash3(xi, yi, seed), b = hash3(xi + 1, yi, seed), c = hash3(xi, yi + 1, seed), d = hash3(xi + 1, yi + 1, seed);
+  const u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy);
+  return lerp(lerp(a, b, u), lerp(c, d, u), v);
+}
+// deterministic RNG for gameplay-level randomness (ambient only)
+const rngState = new Uint32Array([0x9e3779b9]);
+function rnd() {
+  let s = rngState[0];
+  s ^= s << 13; s ^= s >>> 17; s ^= s << 5;
+  rngState[0] = s;
+  return (s >>> 8) / 16777216;
+}
+
+// ------------------------------------------------------------------ framebuffer
+const fb = new Uint8Array(W * H);      // palette indices
+const zb = new Float32Array(W * H);    // depth (x + y of the visible surface; larger = nearer)
+const hb = new Uint8Array(W * H);      // hotspot id under each pixel (0 = none)
+const sm = new Uint8Array(W * H);      // 1 where a sprite was drawn this frame (skips reflections)
+
+function pset(x, y, c) { if (x >= 0 && y >= 0 && x < W && y < H) fb[y * W + x] = c; }
+function fillRect(x, y, w, h, c) {
+  const x0 = Math.max(0, x), x1 = Math.min(W, x + w), y0 = Math.max(0, y), y1 = Math.min(H, y + h);
+  for (let yy = y0; yy < y1; yy++) fb.fill(c, yy * W + x0, yy * W + x1);
+}
+function remapRect(x, y, w, h, map) {
+  const x0 = Math.max(0, x), x1 = Math.min(W, x + w), y0 = Math.max(0, y), y1 = Math.min(H, y + h);
+  for (let yy = y0; yy < y1; yy++) for (let i = yy * W + x0, e = yy * W + x1; i < e; i++) fb[i] = map[fb[i]];
+}
+// dithered remap: applies map where bayer < k (k in 0..1)
+function ditherRect(x, y, w, h, map, k) {
+  const x0 = Math.max(0, x), x1 = Math.min(W, x + w), y0 = Math.max(0, y), y1 = Math.min(H, y + h);
+  for (let yy = y0; yy < y1; yy++) for (let xx = x0; xx < x1; xx++) if (bay(xx, yy) < k) fb[yy * W + xx] = map[fb[yy * W + xx]];
+}
+function hline(x0, x1, y, c) { for (let x = x0; x <= x1; x++) pset(x, y, c); }
+function vline(x, y0, y1, c) { for (let y = y0; y <= y1; y++) pset(x, y, c); }
+function rectOutline(x, y, w, h, c) { hline(x, x + w - 1, y, c); hline(x, x + w - 1, y + h - 1, c); vline(x, y, y + h - 1, c); vline(x + w - 1, y, y + h - 1, c); }
+
+
+// =================================================================== ISOMETRIC ROOM RASTERISER
+// World metres -> room screen space. Every surface is rasterised by inverse projection so each
+// pixel knows its world position (lighting bake), its depth (x + y) and its hotspot.
+const TW = 16, TH = 8, ZH = 16;
+function isoX(x, y) { return (x - y) * TW; }
+function isoY(x, y, z) { return (x + y) * TH - z * ZH; }
+
+const NRM_NONE = 0, NRM_UP = 1, NRM_X = 2, NRM_Y = 3, NRM_BB = 4, NRM_SKY = 5;
+const MAT_PUDDLE = 1, MAT_GLOSS = 2, MAT_GLASS = 4, MAT_EMIT = 8, MAT_WATER = 16, MAT_OUTSIDE = 32;
+
+// a room buffer covers the room's screen-space bounding box
+function makeRB(x0, y0, x1, y1) {
+  const w = x1 - x0, h = y1 - y0, n = w * h;
+  const rb = {
+    w, h, ox: x0, oy: y0,
+    col: new Uint8Array(n).fill(T), dep: new Float32Array(n).fill(-1e9), hot: new Uint8Array(n),
+    nrm: new Uint8Array(n), mat: new Uint8Array(n), lgt: new Uint8Array(n), refl: null,
+    wx: new Float32Array(n), wy: new Float32Array(n), wz: new Float32Array(n)
+  };
+  return rb;
+}
+// current write target and state shared by primitives (set per call to keep signatures small)
+let RB = null, curHot = 0, curMat = 0, curBias = 0;
+function setHot(h) { curHot = h | 0; }
+function setMat(m) { curMat = m | 0; }
+function setBias(b) { curBias = b; }
+function plot(bx, by, c, d, nrm, x, y, z) {
+  if (bx < 0 || by < 0 || bx >= RB.w || by >= RB.h || c === T) return;
+  const i = by * RB.w + bx;
+  d += curBias;
+  if (d < RB.dep[i]) return;
+  RB.col[i] = c; RB.dep[i] = d; RB.nrm[i] = nrm; RB.hot[i] = curHot; RB.mat[i] = curMat;
+  RB.wx[i] = x; RB.wy[i] = y; RB.wz[i] = z;
+}
+function bboxOf(pts) {
+  let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+  for (let i = 0; i < pts.length; i += 3) {
+    const sx = isoX(pts[i], pts[i + 1]), sy = isoY(pts[i], pts[i + 1], pts[i + 2]);
+    if (sx < x0) x0 = sx; if (sx > x1) x1 = sx; if (sy < y0) y0 = sy; if (sy > y1) y1 = sy;
+  }
+  return [Math.floor(x0) - RB.ox - 1, Math.floor(y0) - RB.oy - 1, Math.ceil(x1) - RB.ox + 1, Math.ceil(y1) - RB.oy + 1];
+}
+const EPS = 1e-4;
+// horizontal face at height z (normal +z). sh(x, y, px, py) -> colour or T
+function rFloor(x0, y0, x1, y1, z, sh) {
+  const bb = bboxOf([x0, y0, z, x1, y0, z, x0, y1, z, x1, y1, z]);
+  for (let by = Math.max(0, bb[1]); by < Math.min(RB.h, bb[3]); by++) {
+    const sy = by + RB.oy + 0.5 + z * ZH;
+    for (let bx = Math.max(0, bb[0]); bx < Math.min(RB.w, bb[2]); bx++) {
+      const sx = bx + RB.ox + 0.5, a = sx / TW, b = sy / TH;
+      const x = (a + b) * 0.5, y = (b - a) * 0.5;
+      if (x < x0 - EPS || x >= x1 - EPS || y < y0 - EPS || y >= y1 - EPS) continue;
+      plot(bx, by, sh(x, y, bx + RB.ox, by + RB.oy), x + y, NRM_UP, x, y, z);
+    }
+  }
+}
+// wall in plane x = xw, facing +x. sh(y, z, px, py)
+function rWallX(xw, y0, y1, z0, z1, sh) {
+  const bb = bboxOf([xw, y0, z0, xw, y1, z0, xw, y0, z1, xw, y1, z1]);
+  for (let bx = Math.max(0, bb[0]); bx < Math.min(RB.w, bb[2]); bx++) {
+    const sx = bx + RB.ox + 0.5, y = xw - sx / TW;
+    if (y < y0 - EPS || y >= y1 - EPS) continue;
+    for (let by = Math.max(0, bb[1]); by < Math.min(RB.h, bb[3]); by++) {
+      const sy = by + RB.oy + 0.5, z = ((xw + y) * TH - sy) / ZH;
+      if (z < z0 - EPS || z >= z1 - EPS) continue;
+      plot(bx, by, sh(y, z, bx + RB.ox, by + RB.oy), xw + y, NRM_X, xw, y, z);
+    }
+  }
+}
+// wall in plane y = yw, facing +y. sh(x, z, px, py)
+function rWallY(yw, x0, x1, z0, z1, sh) {
+  const bb = bboxOf([x0, yw, z0, x1, yw, z0, x0, yw, z1, x1, yw, z1]);
+  for (let bx = Math.max(0, bb[0]); bx < Math.min(RB.w, bb[2]); bx++) {
+    const sx = bx + RB.ox + 0.5, x = sx / TW + yw;
+    if (x < x0 - EPS || x >= x1 - EPS) continue;
+    for (let by = Math.max(0, bb[1]); by < Math.min(RB.h, bb[3]); by++) {
+      const sy = by + RB.oy + 0.5, z = ((x + yw) * TH - sy) / ZH;
+      if (z < z0 - EPS || z >= z1 - EPS) continue;
+      plot(bx, by, sh(x, z, bx + RB.ox, by + RB.oy), x + yw, NRM_Y, x, yw, z);
+    }
+  }
+}
+// solid colour shader helpers
+function flat(c) { return () => c; }
+// box: top, +x face, +y face. Each shader gets its face's local coords; pass null to skip a face.
+function rBox(x0, y0, z0, x1, y1, z1, shTop, shX, shY) {
+  if (shX) rWallX(x1, y0, y1, z0, z1, shX);
+  if (shY) rWallY(y1, x0, x1, z0, z1, shY);
+  if (shTop) rFloor(x0, y0, x1, y1, z1, shTop);
+}
+// simple shaded box: top lit, +x face mid, +y face dark (light from upper left)
+function rBoxC(x0, y0, z0, x1, y1, z1, top, sideX, sideY) {
+  rBox(x0, y0, z0, x1, y1, z1, flat(top), flat(sideX), flat(sideY));
+}
+// vertical cylinder. sh(ang, z, px, py, edge) ang in -1..1 (left..right silhouette), edge = 1 on outline
+function rCyl(cx, cy, r, z0, z1, sh, capSh) {
+  const scx = isoX(cx, cy), rs = r * TW * Math.SQRT2;
+  const bx0 = Math.floor(scx - rs) - RB.ox - 1, bx1 = Math.ceil(scx + rs) - RB.ox + 1;
+  const syTop = isoY(cx, cy, z1) - r * TH * Math.SQRT2 - 2, syBot = isoY(cx, cy, z0) + r * TH * Math.SQRT2 + 2;
+  for (let bx = Math.max(0, bx0); bx < Math.min(RB.w, bx1); bx++) {
+    const dx = bx + RB.ox + 0.5 - scx;
+    if (Math.abs(dx) > rs) continue;
+    const a = dx / rs, b = Math.sqrt(Math.max(0, 1 - a * a)) * r;       // toward viewer
+    const ao = a * r;
+    const x = cx + (ao + b) / Math.SQRT2, y = cy + (b - ao) / Math.SQRT2;
+    const edge = Math.abs(dx) > rs - 1 ? 1 : 0;
+    for (let by = Math.max(0, Math.floor(syTop) - RB.oy); by < Math.min(RB.h, Math.ceil(syBot) - RB.oy); by++) {
+      const sy = by + RB.oy + 0.5, z = ((x + y) * TH - sy) / ZH;
+      if (z < z0 - EPS || z >= z1 - EPS) continue;
+      plot(bx, by, sh(a, z, bx + RB.ox, by + RB.oy, edge), x + y, NRM_BB, x, y, z);
+    }
+  }
+  if (capSh) {
+    const bb = bboxOf([cx - r, cy - r, z1, cx + r, cy - r, z1, cx - r, cy + r, z1, cx + r, cy + r, z1]);
+    for (let by = Math.max(0, bb[1]); by < Math.min(RB.h, bb[3]); by++) {
+      const sy = by + RB.oy + 0.5 + z1 * ZH;
+      for (let bx = Math.max(0, bb[0]); bx < Math.min(RB.w, bb[2]); bx++) {
+        const sx = bx + RB.ox + 0.5, a = sx / TW, b = sy / TH, x = (a + b) * 0.5, y = (b - a) * 0.5;
+        const dd = (x - cx) * (x - cx) + (y - cy) * (y - cy);
+        if (dd > r * r) continue;
+        plot(bx, by, capSh(x - cx, y - cy, bx + RB.ox, by + RB.oy), x + y, NRM_UP, x, y, z1);
+      }
+    }
+  }
+}
+// sphere (lamp globes). sh(nx, ny, px, py) with nx,ny the screen-space normal (-1..1)
+function rSphere(cx, cy, cz, r, sh) {
+  const scx = isoX(cx, cy), scy = isoY(cx, cy, cz), rs = r * ZH;
+  for (let by = Math.floor(scy - rs) - RB.oy - 1; by <= Math.ceil(scy + rs) - RB.oy + 1; by++) {
+    for (let bx = Math.floor(scx - rs) - RB.ox - 1; bx <= Math.ceil(scx + rs) - RB.ox + 1; bx++) {
+      if (bx < 0 || by < 0 || bx >= RB.w || by >= RB.h) continue;
+      const nx = (bx + RB.ox + 0.5 - scx) / rs, ny = (by + RB.oy + 0.5 - scy) / rs;
+      if (nx * nx + ny * ny > 1) continue;
+      plot(bx, by, sh(nx, ny, bx + RB.ox, by + RB.oy), cx + cy + r * 0.5, NRM_BB, cx, cy, cz);
+    }
+  }
+}
+// pixel-art stamp standing at a world anchor (bottom-centre of the art at the anchor).
+// rows: array of strings, key: char -> colour. depth is the anchor's x + y.
+function rStamp(x, y, z, rows, key, flip) {
+  const w = rows[0].length, h = rows.length;
+  const sx0 = Math.round(isoX(x, y)) - (w >> 1) - RB.ox, sy0 = Math.round(isoY(x, y, z)) - h - RB.oy;
+  for (let r = 0; r < h; r++) for (let i = 0; i < w; i++) {
+    const ch = rows[r][flip ? w - 1 - i : i];
+    if (ch === '.' || ch === ' ') continue;
+    const c = key[ch];
+    if (c === undefined) continue;
+    plot(sx0 + i, sy0 + r, c, x + y, NRM_BB, x, y, z + (h - r) / ZH);
+  }
+}
+// flat pixel art lying on a wall plane (posters, clocks, frames). u runs along the wall.
+function rDecalX(xw, yc, zc, rows, key) {             // on a wall x = xw, centred at (yc, zc)
+  const w = rows[0].length, h = rows.length;
+  for (let r = 0; r < h; r++) for (let i = 0; i < w; i++) {
+    const ch = rows[r][i]; if (ch === '.' || ch === ' ') continue;
+    const c = key[ch]; if (c === undefined) continue;
+    // step along the wall: each column moves -y by 1/16 m... use projected pixel placement
+    const sx = Math.round(isoX(xw, yc)) - (w >> 1) + i, sy = Math.round(isoY(xw, yc, zc)) - (h >> 1) + r + Math.round(((w >> 1) - i) * 0.5);
+    plot(sx - RB.ox, sy - RB.oy, c, xw + yc + 0.02, NRM_X, xw, yc, zc);
+  }
+}
+function rDecalY(yw, xc, zc, rows, key) {             // on a wall y = yw, centred at (xc, zc)
+  const w = rows[0].length, h = rows.length;
+  for (let r = 0; r < h; r++) for (let i = 0; i < w; i++) {
+    const ch = rows[r][i]; if (ch === '.' || ch === ' ') continue;
+    const c = key[ch]; if (c === undefined) continue;
+    const sx = Math.round(isoX(xc, yw)) - (w >> 1) + i, sy = Math.round(isoY(xc, yw, zc)) - (h >> 1) + r + Math.round((i - (w >> 1)) * 0.5);
+    plot(sx - RB.ox, sy - RB.oy, c, xc + yw + 0.02, NRM_Y, xc, yw, zc);
+  }
+}
+// a line of pixels in world space (wires, rails, pipes); c or shader
+function rLine3(xa, ya, za, xb, yb, zb, c, thick) {
+  const sxa = isoX(xa, ya), sya = isoY(xa, ya, za), sxb = isoX(xb, yb), syb = isoY(xb, yb, zb);
+  const n = Math.max(1, Math.ceil(Math.max(Math.abs(sxb - sxa), Math.abs(syb - sya))));
+  for (let k = 0; k <= n; k++) {
+    const t = k / n, x = lerp(xa, xb, t), y = lerp(ya, yb, t), z = lerp(za, zb, t);
+    const px = Math.round(lerp(sxa, sxb, t)) - RB.ox, py = Math.round(lerp(sya, syb, t)) - RB.oy;
+    plot(px, py, c, x + y + 0.01, NRM_BB, x, y, z);
+    if (thick) plot(px, py + 1, c, x + y + 0.01, NRM_BB, x, y, z);
+  }
+}
+
+// =================================================================== LIGHTING BAKE
+// light: {x,y,z, r, k, map?, tag?, occl?} point light; map defaults to warm (LIT)
+// slat:  {slat:1, wall:'x'|'y', plane, a0, a1, z0, z1, dx, dy, dz, period, duty, k, map?}
+function segHitsBox(ax, ay, az, bx, by, bz, o) {
+  // slab test on segment a->b against box o = [x0,y0,z0,x1,y1,z1]
+  let t0 = 0.02, t1 = 0.98;
+  const d = [bx - ax, by - ay, bz - az], a = [ax, ay, az];
+  for (let k = 0; k < 3; k++) {
+    if (Math.abs(d[k]) < 1e-9) { if (a[k] < o[k] || a[k] > o[k + 3]) return false; continue; }
+    let u0 = (o[k] - a[k]) / d[k], u1 = (o[k + 3] - a[k]) / d[k];
+    if (u0 > u1) { const q = u0; u0 = u1; u1 = q; }
+    if (u0 > t0) t0 = u0; if (u1 < t1) t1 = u1;
+    if (t0 > t1) return false;
+  }
+  return true;
+}
+function pointLightAt(L, x, y, z, nrm, occluders) {
+  const dx = L.x - x, dy = L.y - y, dz = L.z - z, d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  if (d >= L.r) return 0;
+  let f = 1 - d / L.r; f = f * f;
+  // facing: walls only get light from their front side
+  if (nrm === NRM_X && dx < -0.05) return 0;
+  if (nrm === NRM_Y && dy < -0.05) return 0;
+  if (nrm === NRM_UP && dz < -0.05) return 0;
+  if (nrm === NRM_X) f *= clamp(0.35 + dx / (d + 1e-6), 0, 1);
+  else if (nrm === NRM_Y) f *= clamp(0.35 + dy / (d + 1e-6), 0, 1);
+  else if (nrm === NRM_UP) f *= clamp(0.3 + dz / (d + 1e-6), 0, 1.2);
+  if (L.occl !== false && occluders) for (let i = 0; i < occluders.length; i++) if (segHitsBox(x, y, z, L.x, L.y, L.z, occluders[i])) return 0;
+  return f * L.k;
+}
+// venetian-blind light through a window: trace back along -dir to the window plane
+function slatLightAt(S, x, y, z, occ) {
+  let t;
+  if (S.wall === 'x') { if (Math.abs(S.dx) < 1e-6) return 0; t = (x - S.plane) / S.dx; }
+  else { if (Math.abs(S.dy) < 1e-6) return 0; t = (y - S.plane) / S.dy; }
+  if (t < 0) return 0;
+  const hx = x - S.dx * t, hy = y - S.dy * t, hz = z - S.dz * t;
+  const a = S.wall === 'x' ? hy : hx;
+  if (a < S.a0 || a > S.a1 || hz < S.z0 || hz > S.z1) return 0;
+  const ph = frac((hz - S.z0) / S.period);
+  if (ph > S.duty) return 0;
+  // soft 1px edge handled by dithering the fractional distance to the slat edge
+  if (occ) for (let i = 0; i < occ.length; i++) if (segHitsBox(x, y, z, hx, hy, hz, occ[i])) return 0;
+  const edge = Math.min(ph, S.duty - ph) / S.period;
+  return S.k * clamp(edge * 40, 0.35, 1);
+}
+function quantLight(c, level, b) {
+  const steps = lightSteps(level, b);
+  if (steps > 0) { c = LIT[c]; if (steps > 1) c = LIT[c]; if (steps > 2) c = LIT[c]; }
+  else if (steps < 0) { c = SHD[c]; if (steps < -1) c = SHD[c]; if (steps < -2) c = SHD[c]; }
+  return c;
+}
+function bakeRoom(rb, room) {
+  const lights = room.lights || [], occ = room.occluders || [];
+  const amb = room.ambient || 0;
+  rb.alt = new Uint8Array(rb.w * rb.h);
+  for (let by = 0; by < rb.h; by++) for (let bx = 0; bx < rb.w; bx++) {
+    const i = by * rb.w + bx, n = rb.nrm[i];
+    if (n === NRM_NONE || n === NRM_SKY || (rb.mat[i] & MAT_EMIT)) continue;
+    const x = rb.wx[i], y = rb.wy[i], z = rb.wz[i], px = bx + rb.ox, py = by + rb.oy;
+    const b = bay(px, py);
+    let warm = amb + (room.dark ? room.dark(x, y, z, n) : 0);
+    let bestTag = 0, bestTagV = 0, tagL = null;
+    for (let l = 0; l < lights.length; l++) {
+      const L = lights[l];
+      const v = L.slat ? slatLightAt(L, x, y, z, occ) : pointLightAt(L, x, y, z, n, occ);
+      if (v <= 0) continue;
+      if (L.tag) { if (v > bestTagV) { bestTagV = v; bestTag = L.tag; tagL = L; } continue; }
+      if (L.map) { if (b < v) rb.col[i] = L.map[rb.col[i]]; }
+      else warm += v;
+    }
+    const base = rb.col[i];
+    const c = quantLight(base, warm, b);
+    rb.col[i] = c;
+    if (bestTag) {
+      // the same pixel with its dynamic light switched on
+      const on = tagL.map ? (b < bestTagV ? tagL.map[c] : c) : quantLight(base, warm + bestTagV, b);
+      if (on !== c) { rb.lgt[i] = bestTag; rb.alt[i] = on; }
+    }
+  }
+}
+// banded light: whole steps, dithered only in a narrow band around each half-step boundary
+const DITHER_SPREAD = 0.5;
+function lightSteps(level, b) { return Math.floor(level + 0.5 + (b - 0.5) * DITHER_SPREAD); }
+// evaluate light for a sprite pixel at world (x, y, z): returns warm level (float)
+const spriteTint = { map: null, v: 0 };
+function lightLevelAt(room, x, y, z) {
+  const lights = room.lights || [];
+  let warm = (room.ambient || 0) + (room.dark ? room.dark(x, y, z, NRM_BB) : 0) + (room.spriteAmb || 0);
+  spriteTint.map = null; spriteTint.v = 0;
+  for (let l = 0; l < lights.length; l++) {
+    const L = lights[l];
+    let v;
+    if (L.slat) v = slatLightAt(L, x, y, z, room.occluders);
+    else {
+      const dx = L.x - x, dy = L.y - y, dz = L.z - z, d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (d >= L.r) continue;
+      v = (1 - d / L.r); v = v * v * L.k * clamp(0.5 + (dx + dy) / (d + 1e-6) * 0.5, 0.25, 1);
+    }
+    if (v <= 0) continue;
+    if (L.tag) { if (!lightOn(L.tag)) continue; if (L.map) { if (v > spriteTint.v) { spriteTint.v = v; spriteTint.map = L.map; } } else warm += v; continue; }
+    if (L.map) { if (v > spriteTint.v) { spriteTint.v = v; spriteTint.map = L.map; } }
+    else warm += v;
+  }
+  return warm;
+}
+// dynamic light states (tag -> on/off), set every frame by the room's update
+const lightState = new Uint8Array(64).fill(1);
+const tagMap = [];            // tag -> remap applied to tagged pixels when on
+function lightOn(tag) { return lightState[tag] === 1; }
+
+// finalise a room buffer: compute reflection sources for puddles, drop bake-only arrays
+function finishRB(rb) {
+  let any = false;
+  for (let i = 0; i < rb.mat.length; i++) if (rb.mat[i] & (MAT_PUDDLE | MAT_GLOSS)) { any = true; break; }
+  if (any) {
+    rb.refl = new Int32Array(rb.w * rb.h).fill(-1);
+    for (let bx = 0; bx < rb.w; bx++) {
+      for (let by = rb.h - 1; by >= 0; by--) {
+        const i = by * rb.w + bx;
+        if (!(rb.mat[i] & (MAT_PUDDLE | MAT_GLOSS)) || rb.nrm[i] !== NRM_UP) continue;
+        // walk up the column to the first non-floor pixel: that is the base line to mirror about
+        let k = by - 1;
+        while (k >= 0 && rb.nrm[k * rb.w + bx] === NRM_UP) k--;
+        if (k < 0) continue;
+        const base = k + 0.5, src = Math.round(2 * base - by);
+        if (src >= 0 && src < rb.h) rb.refl[i] = src * rb.w + bx;
+      }
+    }
+  }
+  rb.wx = rb.wy = rb.wz = null;
+}
+
+
+// =================================================================== PEOPLE (procedural paper dolls)
+// Two drawn views: FRONT = facing SE (toward the viewer, turned right), BACK = facing NE.
+// SW / NW are mirrors. Frames are Uint8 palette buffers, feet anchored at (SPR_AX, SPR_BY).
+// The canvas leaves room above the tallest figure for a neck, a tall hat or a big hairdo (h up to about 36).
+const SPR_W = 26, SPR_H = 46, SPR_AX = 13, SPR_BY = 44;
+let SF = null;                                              // frame being drawn
+function newFrame() { return new Uint8Array(SPR_W * SPR_H).fill(T); }
+function sp(x, y, c) { if (c !== T && c !== undefined && x >= 0 && y >= 0 && x < SPR_W && y < SPR_H) SF[y * SPR_W + x] = c; }
+function spr(x, y, w, h, c) { for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) sp(x + i, y + j, c); }
+function spget(x, y) { return (x < 0 || y < 0 || x >= SPR_W || y >= SPR_H) ? T : SF[y * SPR_W + x]; }
+function spline(x0, y0, x1, y1, c, w) {
+  const n = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0), 1);
+  for (let k = 0; k <= n; k++) {
+    const x = Math.round(lerp(x0, x1, k / n)), y = Math.round(lerp(y0, y1, k / n));
+    for (let j = 0; j < (w || 1); j++) sp(x + j, y, c);
+  }
+}
+// string map at (x0, y0). key maps chars to colours from the costume
+function spmap(x0, y0, rows, key, flip) {
+  for (let r = 0; r < rows.length; r++) {
+    const row = rows[r];
+    for (let i = 0; i < row.length; i++) {
+      const ch = row[flip ? row.length - 1 - i : i];
+      if (ch === '.' || ch === ' ') continue;
+      sp(x0 + i, y0 + r, key[ch]);
+    }
+  }
+}
+// dark outline around the silhouette (selective: lit top-left edge gets ink, rest black)
+function outline(oc) {
+  const src = SF.slice();
+  for (let y = 0; y < SPR_H; y++) for (let x = 0; x < SPR_W; x++) {
+    if (src[y * SPR_W + x] !== T) continue;
+    const n = (x > 0 && src[y * SPR_W + x - 1] !== T) || (x < SPR_W - 1 && src[y * SPR_W + x + 1] !== T) ||
+              (y > 0 && src[(y - 1) * SPR_W + x] !== T) || (y < SPR_H - 1 && src[(y + 1) * SPR_W + x] !== T);
+    if (n) SF[y * SPR_W + x] = oc;
+  }
+}
+
+// ------------------------------------------------------------------ costume palettes
+// o outline, H/h/b hat, S/s/L skin, e eye, m mouth, A/a hair, C/c/K main garment (mid/dark/light),
+// B belt, k buckle, T/t trousers or skirt, F shoes, W shirt, N tie, G gloves/hands override, X extra (buttons, badges),
+// Y glasses frames, V accessory (scarf, flower), P prop (cane, satchel, case)
+function costume(o) {
+  const d = { o: C.BLK, S: C.SKM, s: C.SKS, L: C.SKL, e: C.INK, m: C.SKS, A: C.HAIRD, a: C.HAIRL,
+              H: C.ST1, h: C.ST0, b: C.INK, C: C.S1, c: C.S0, K: C.S2, B: C.INK, k: C.BRASS,
+              T: C.ST0, t: C.NAV, F: C.INK, W: C.CREAM, N: C.OX, X: C.BRASS, Y: C.CRS, V: C.CRIM, P: C.BRN };
+  for (const k in o) d[k] = o[k];
+  return d;
+}
+// ------------------------------------------------------------------ figure builder
+// def: {h: height rows, body: 'coat'|'suit'|'skirt'|'dress'|'vest'|'long',
+//       hat: 'fedora'|'cap'|'doorman'|'pillbox'|'homburg'|'bowler'|'cloche'|'newsboy'|'beret'|'none',
+//       hair: 'short'|'slick'|'bob'|'bun'|'bald'|'long'|'curly'|'pomp', wide: 0|1 (stocky), key: costume}
+// Silhouette (all optional; leaving them out draws the figure exactly as before):
+//   neck 0..2 rows · shoulders -1..2 px each side · belly 0..2 px · flare (coat hem, default 1.4) · stance 0..2 px
+//   lean -1..1 px (upper body back or forward) · stride (walk leg swing, default 1) · bounce (walk bob, default 1)
+//   idle 'pockets'|'crossed'|'hips'|'smoke' (the standing pose)
+//   sig: signature features, drawn on the doll and on the portrait: 'glasses', 'moustache', 'beard', 'scarf',
+//        'flower', 'badge', 'satchel', 'cane', 'case'
+// pose: {dir: 0 front / 1 back, q: leg swing -1..1, lift: 0/1 which foot lifted, arm: swing -1..1,
+//        reach: 0..1, talk: 0/1, bob: 0/1, hold: item id, style: idle style}
+function hasSig(def, name) { return !!def.sig && def.sig.indexOf(name) >= 0; }
+function drawFigure(def, pose) {
+  const K = def.key, back = pose.dir === 1, wd = def.wide ? 1 : 0;
+  const top = SPR_BY - def.h + 1 + pose.bob;
+  const fem = def.body === 'skirt' || def.body === 'dress';
+  const neck = def.neck || 0, so = def.shoulders || 0, belly = def.belly || 0, stance = def.stance || 0;
+  const flareK = def.flare === undefined ? 1.4 : def.flare, style = pose.style || null;
+  // vertical landmarks
+  const headTop = top + (def.hat === 'none' ? 1 : 3);             // first face row (brim row is headTop-1)
+  const faceY = headTop, chin = faceY + 4, sh = chin + 1;           // shoulders row
+  const waist = sh + (fem ? 6 : 7), hem = fem ? SPR_BY - 6 : SPR_BY - 6 - (def.body === 'long' ? -2 : def.body === 'coat' ? 0 : 5);
+  const cx = SPR_AX;                                                // figure centre column
+  const fwdX = 1, fwdY = back ? -0.5 : 0.5;
+  // ---------------- neck (only when the definition asks for one: the head is lifted by that many rows)
+  for (let r = 1; r <= neck; r++) { sp(cx - 1, chin + 1 - r, K.S); sp(cx, chin + 1 - r, K.S); sp(cx + 1, chin + 1 - r, K.s); }
+  // ---------------- far arm (behind torso)
+  const as = pose.arm;
+  if (style !== 'crossed') {
+    const sx = cx + 3 + wd + so;
+    if (style === 'hips') { spline(sx, sh + 1, sx + 2, sh + 4, back ? K.C : K.c, 2); spline(sx + 2, sh + 4, sx, waist, back ? K.C : K.c, 2); }
+    else if (style === 'pockets') spline(sx, sh + 1, sx, waist + 1, back ? K.C : K.c, 2);
+    else {
+      const hx = sx + Math.round(-as * 0.8 * fwdX), hy = waist + 1 + Math.round(-as * 0.6 * fwdY);
+      spline(sx, sh + 1, hx, hy, back ? K.C : K.c, 2);
+      spr(hx, hy + 1, 2, 1, back ? K.s : K.s);
+    }
+  }
+  // ---------------- legs
+  const q = pose.q;
+  const hipY = hem - 1;
+  for (let leg = 0; leg < 2; leg++) {
+    const near = leg === 0, sgn = near ? 1 : -1;
+    const baseX = near ? cx - 2 - stance : cx + 1 + stance, baseY = near ? SPR_BY : SPR_BY - 1;
+    const dx = Math.round(q * sgn * 2.2 * fwdX), dy = Math.round(q * sgn * 2.2 * fwdY);
+    const lift = (pose.lift === (near ? 1 : 2)) ? 1 : 0;
+    const fx = baseX + dx, fy = baseY + dy - lift;
+    const legC = fem ? (near ? K.L : K.S) : (near ? K.T : K.t);
+    spline(baseX + (near ? 0 : 0), hipY, fx, fy - 1, legC, 2);
+    // shoe: points along facing
+    if (back) { sp(fx, fy, K.F); sp(fx + 1, fy, K.F); sp(fx + 1, fy - 1, fem ? K.F : legC); }
+    else { spr(fx, fy, 3, 1, K.F); if (fem) sp(fx, fy - 1, K.F); }
+  }
+  // ---------------- lower garment (coat skirt / skirt / trousers top)
+  if (def.body === 'coat' || def.body === 'long') {
+    for (let y = waist + 1; y <= hem; y++) {
+      const t = (y - waist) / (hem - waist), flare = Math.round(t * flareK);
+      const x0 = cx - 3 - wd - flare + (y === hem ? Math.round(q * 0.6) : 0), x1 = cx + 3 + wd + flare + (y === hem ? Math.round(q * 0.6) : 0);
+      for (let x = x0; x <= x1; x++) {
+        let c = K.C;
+        if (x <= x0) c = K.K; else if (x >= x1 - 1) c = K.c;
+        if (!back && x === cx + 1) c = K.c;                        // front opening
+        if (back && x === cx && y > waist + 3) c = K.c;            // back vent
+        if (y === hem) c = x <= x0 + 1 ? K.C : K.c;
+        sp(x, y, c);
+      }
+    }
+  } else if (fem) {
+    for (let y = waist + 1; y <= hem; y++) {
+      const t = (y - waist) / (hem - waist), flare = def.body === 'dress' ? Math.round(t * 2) : 0;
+      const x0 = cx - 3 - flare, x1 = cx + 2 + flare;
+      for (let x = x0; x <= x1; x++) sp(x, y, x <= x0 ? K.T : x >= x1 ? K.t : K.T);
+      if (!back) sp(cx, y, K.t);
+    }
+  } else {
+    // suit / vest: trousers from waist to feet are the legs; add seat
+    for (let y = waist + 1; y <= hipY; y++) for (let x = cx - 3 - wd; x <= cx + 2 + wd; x++) sp(x, y, x >= cx + 1 ? K.t : K.T);
+  }
+  // ---------------- torso
+  for (let y = sh; y <= waist; y++) {
+    const narrow = (y > waist - 2) ? 1 : 0, sw = (y === sh) ? 1 : 0;
+    const sho = y <= sh + 2 ? so : y <= sh + 4 ? Math.trunc(so / 2) : 0;           // broad or narrow shoulders taper to the waist
+    const bel = y >= waist - 3 ? belly - (y === waist - 3 || y === waist ? 1 : 0) : 0;  // the belly rounds out the front
+    const x0 = cx - 4 - wd + narrow + sw - sho, x1 = cx + 4 + wd - narrow - sw + sho + Math.max(0, bel);
+    for (let x = x0; x <= x1; x++) {
+      let c = K.C;
+      if (x <= x0) c = K.K; else if (x >= x1 - (back ? 0 : 1)) c = K.c;
+      sp(x, y, c);
+    }
+  }
+  if (!back) {
+    // lapels + shirt + tie (V opening slightly right of centre: the chest faces SE)
+    if (def.body === 'vest') {
+      for (let y = sh; y <= waist; y++) { sp(cx - 4 - wd + 1, y, K.W); sp(cx + 3 + wd, y, K.W); }
+      for (let y = sh; y <= sh + 2; y++) sp(cx, y, K.W), sp(cx + 1, y, K.W);
+      sp(cx, sh, K.N); sp(cx + 1, sh, K.N);                       // bow tie
+    } else if (def.body !== 'long') {
+      const vy = fem ? 2 : 3;
+      for (let y = sh; y <= sh + vy; y++) {
+        const hw = vy - (y - sh);
+        for (let x = cx + 1 - (hw > 1 ? 1 : 0); x <= cx + 1 + (hw > 0 ? 1 : 0); x++) sp(x, y, K.W);
+        if (!fem) sp(cx + 1, y, y > sh ? K.N : K.W);
+      }
+      sp(cx - 1, sh + 2, K.c); sp(cx + 3, sh + 2, K.K);           // lapel edges
+      if (!fem) { sp(cx - 1, waist - 2, K.c); sp(cx - 1, waist - 4, K.c); } // buttons
+    } else {
+      for (let y = sh + 1; y <= waist; y++) sp(cx + 1, y, K.c);
+      sp(cx - 2, sh + 3, K.X); sp(cx - 2, sh + 6, K.X);             // brass buttons
+    }
+  } else {
+    sp(cx, sh + 2, K.c); sp(cx, sh + 3, K.c);                     // back seam
+  }
+  if (def.body === 'coat') {
+    // belt with buckle, turned-up collar
+    for (let x = cx - 3 - wd; x <= cx + 3 + wd; x++) sp(x, waist, K.B);
+    if (!back) sp(cx + 1, waist, K.k); else sp(cx - 3 - wd, waist, K.B);
+    if (!back) { sp(cx - 3, sh - 1, K.C); sp(cx - 2, sh - 1, K.K); sp(cx + 3, sh - 1, K.c); sp(cx + 3, sh - 2, K.C); sp(cx - 3, sh - 2, K.K); }
+    else { for (let x = cx - 3; x <= cx + 3; x++) sp(x, sh - 1, x < cx - 1 ? K.K : K.C); sp(cx - 3, sh - 2, K.K); sp(cx + 3, sh - 2, K.C); }
+  }
+  if (def.body === 'suit' || def.body === 'skirt') { for (let x = cx - 2 - wd; x <= cx + 2 + wd; x++) sp(x, waist, K.c); }
+  // ---------------- signature features on the body (behind the near arm)
+  if (def.sig) drawBodySig(def, K, back, cx, sh, waist, wd);
+  // ---------------- head
+  drawHead(def, K, back, cx, faceY - neck, pose);
+  // ---------------- near arm (in front)
+  {
+    const sx = cx - 4 - wd - so, reach = pose.reach || 0;
+    let hx = sx + Math.round(as * 1.2 * fwdX), hy = waist + 2 + Math.round(as * 0.8 * fwdY);
+    if (reach > 0) { hx = Math.round(lerp(hx, cx + 5, reach)); hy = Math.round(lerp(hy, sh + 3 + (back ? -2 : 0), reach)); }
+    if (pose.talk) { hx = sx + 1; hy = waist - 1; }
+    let hand = true;
+    if (style === 'pockets' && !reach && !pose.talk) { hx = sx + 1; hy = waist; hand = false; }
+    if (style === 'smoke' && !reach && !pose.talk) { hx = cx + 1; hy = chin - neck; }
+    if (style === 'crossed' && !reach && !pose.talk) {
+      spline(sx, sh + 1, sx, sh + 4, K.C, 2); spline(sx, sh + 4, cx + 3 + so, sh + 4, K.C, 2); spline(sx + 1, sh + 5, cx + 3 + so, sh + 5, K.c, 1);
+      sp(sx, sh + 1, K.K); sp(sx, sh + 2, K.K); sp(cx + 4 + so, sh + 4, K.G !== undefined ? K.G : K.S);
+      hand = false; hx = cx + 3; hy = sh + 3;
+    } else if (style === 'hips' && !reach && !pose.talk) {
+      spline(sx, sh + 1, sx - 2, sh + 4, K.C, 2); spline(sx - 2, sh + 4, sx, waist, K.C, 2);
+      sp(sx, sh + 1, K.K); sp(sx, sh + 2, K.K); sp(sx + 1, waist, K.G !== undefined ? K.G : K.S);
+      hand = false; hx = sx; hy = waist - 1;
+    } else {
+      spline(sx, sh + 1, sx + Math.round((hx - sx) * 0.4), sh + 4, K.C, 2);
+      spline(sx + Math.round((hx - sx) * 0.4), sh + 4, hx, hy, K.C, 2);
+      sp(sx, sh + 1, K.K); sp(sx, sh + 2, K.K);
+    }
+    if (hand) { if (!back || reach > 0) spr(hx, hy + 1, 2, 2, K.G !== undefined ? K.G : K.S); else spr(hx, hy + 1, 2, 1, K.s); }
+    if (style === 'smoke' && !reach && !pose.talk) { sp(hx + 2, hy + 1, C.CREAM); sp(hx + 3, hy + 1, (pose.bob ? C.RED : C.AMB)); }
+    if (pose.hold && def.holdDraw) def.holdDraw(hx, hy + 1, back);
+    if (def.sig) drawHandSig(def, K, back, hx, hy, style);
+  }
+  if (def.extra) def.extra(K, back, cx, faceY, sh, waist, hem, pose);
+  if (def.lean) leanUpper(def.lean, sh + 3);
+  outline(K.o);
+}
+// upper body leans by d pixels (forward = toward the way the figure faces, which is +x in both drawn views)
+function leanUpper(d, rows) {
+  const src = SF.slice();
+  for (let y = 0; y < rows; y++) for (let x = 0; x < SPR_W; x++) {
+    const sx = x - d; SF[y * SPR_W + x] = sx >= 0 && sx < SPR_W ? src[y * SPR_W + sx] : T;
+  }
+}
+// signature features worn on the body: scarf, buttonhole flower, badge, satchel strap and bag
+function drawBodySig(def, K, back, cx, sh, waist, wd) {
+  if (hasSig(def, 'satchel')) {
+    if (!back) { spline(cx + 3 + wd, sh, cx - 2, waist - 1, K.P, 1); spr(cx + 4 + wd, waist - 1, 3, 4, K.P); sp(cx + 4 + wd, waist - 1, K.c); }
+    else { spline(cx - 3 - wd, sh, cx + 2, waist - 1, K.P, 1); spr(cx + 3 + wd, waist - 1, 3, 4, K.P); }
+  }
+  if (hasSig(def, 'badge') && !back) sp(cx - 2, sh + 3, K.X);
+  if (hasSig(def, 'flower') && !back) { sp(cx - 1, sh + 1, K.V); sp(cx - 1, sh + 2, C.G2); }
+  if (hasSig(def, 'scarf')) {
+    for (let x = cx - 3; x <= cx + 3; x++) { sp(x, sh - 1, K.V); sp(x, sh, x < cx ? K.V : C.PLUM); }
+    const tx = back ? cx + 2 : cx - 2;
+    for (let y = sh + 1; y <= sh + 5; y++) sp(tx, y, y & 1 ? K.V : C.PLUM);
+  }
+}
+// things carried in the near hand: a cane to the ground, a case below the hand
+function drawHandSig(def, K, back, hx, hy, style) {
+  if (style === 'crossed' || style === 'pockets') return;
+  if (hasSig(def, 'cane')) { for (let y = hy + 3; y <= SPR_BY; y++) sp(hx, y, K.P); sp(hx + 1, hy + 2, K.P); }
+  else if (hasSig(def, 'case')) { spr(hx - 1, hy + 4, 5, 4, K.P); sp(hx, hy + 3, K.P); sp(hx + 2, hy + 3, K.P); for (let x = hx - 1; x < hx + 4; x++) sp(x, hy + 7, K.c); }
+}
+function drawHead(def, K, back, cx, fy, pose) {
+  // face rows fy..fy+3, chin fy+4; head spans cx-2..cx+2
+  const x0 = cx - 2;
+  if (!back) {
+    spmap(x0, fy, [
+      'AsSSS',
+      'sSSeS',
+      'sSSSSS',
+      '.smSs'
+    ], K);
+    if (pose.talk) sp(x0 + 2, fy + 3, K.e);
+    sp(x0 + 1, fy + 4, K.s); sp(x0 + 2, fy + 4, K.s);
+  } else {
+    spmap(x0, fy, [
+      'sAAAa',
+      'SAaAA',
+      'sSSSs',
+      '.sSs.'
+    ], K);
+    sp(x0 + 1, fy + 4, K.s); sp(x0 + 2, fy + 4, K.s);
+  }
+  // hair styles
+  if (def.hair === 'bob') {
+    if (!back) { spmap(x0 - 1, fy - 2, ['.AAAAa.', 'AAAAAAa', 'AAss...', 'AA.....', 'AA.....', '.A.....'], K); }
+    else { spmap(x0 - 1, fy - 2, ['.AAAAa.', 'AAAAAAa', 'AAAAAAa', 'AAAAAAa', 'AAAAAa.', '.AAAA..'], K); }
+  } else if (def.hair === 'bun') {
+    if (!back) { spmap(x0 - 1, fy - 2, ['.AAAa..', 'AAAAAa.', 'AAs....', 'A......'], K); spmap(x0 - 2, fy - 2, ['aA', 'AA'], K); }
+    else { spmap(x0 - 1, fy - 2, ['.AAAa..', 'AAAAAa.', 'AAAAAa.', '.AaAA..'], K); spmap(x0 + 1, fy - 3, ['aAa'], K); }
+  } else if (def.hair === 'short' || def.hair === 'slick') {
+    if (!back) spmap(x0 - 1, fy - 2, ['.AAAa.', 'AAAAAa', 'AA....'], K);
+    else spmap(x0 - 1, fy - 2, ['.AAAa.', 'AAAAAa', 'AAAAAa'], K);
+  } else if (def.hair === 'bald') {
+    if (!back) spmap(x0 - 1, fy - 2, ['..SSL.', '.SSSSL', 'AS....'], K);
+    else spmap(x0 - 1, fy - 2, ['..SSs.', '.SSSSs', 'AAAAAA'], K);
+  } else if (def.hair === 'long') {
+    if (!back) spmap(x0 - 1, fy - 2, ['.AAAAa.', 'AAAAAAa', 'AAss...', 'AA.....', 'AA.....', 'AA.....', 'AAA....', '.AA....'], K);
+    else spmap(x0 - 1, fy - 2, ['.AAAAa.', 'AAAAAAa', 'AAAAAAa', 'AAAAAAa', 'AAAAAAa', 'AAAAAAa', 'AAAAAA.', '.AAAA..'], K);
+  } else if (def.hair === 'curly') {
+    if (!back) spmap(x0 - 2, fy - 3, ['..AaAa..', '.AAAAAAa', 'AAAAAAA.', 'AAAs....', 'AA......', '.A......'], K);
+    else spmap(x0 - 2, fy - 3, ['..AaAa..', '.AAAAAAa', 'AAAAAAAa', 'AAAAAAA.', 'AAAAAA..', '.AAAA...'], K);
+  } else if (def.hair === 'pomp') {
+    if (!back) spmap(x0 - 1, fy - 3, ['..AAa.', '.AAAAa', 'AAAAAa', 'AA....'], K);
+    else spmap(x0 - 1, fy - 3, ['.aAA..', 'AAAAA.', 'AAAAAa', 'AAAAAa'], K);
+  }
+  // signature features on the face (front view; glasses also show from behind as a temple)
+  if (!back) {
+    if (hasSig(def, 'beard')) { sp(x0 + 1, fy + 3, K.A); sp(x0 + 2, fy + 3, K.A); sp(x0 + 3, fy + 3, K.A); sp(x0 + 4, fy + 3, K.A); sp(x0 + 1, fy + 4, K.A); sp(x0 + 2, fy + 4, K.A); sp(x0 + 3, fy + 4, K.a); }
+    if (hasSig(def, 'moustache')) { sp(x0 + 2, fy + 3, K.A); sp(x0 + 3, fy + 3, K.A); sp(x0 + 4, fy + 3, K.A); }
+    if (hasSig(def, 'glasses')) { sp(x0 + 2, fy + 1, K.Y); sp(x0 + 3, fy + 1, C.WL); sp(x0 + 4, fy + 1, K.Y); sp(x0 + 1, fy + 1, K.Y); }
+  } else if (hasSig(def, 'glasses')) sp(x0 + 4, fy + 1, K.Y);
+  // hats
+  if (def.hat === 'fedora') {
+    if (!back) spmap(x0 - 2, fy - 4, ['...HHH...', '..HHHHH..', '..bbbbb..', 'hhhhhhhhh', '......hh.'], K);
+    else spmap(x0 - 2, fy - 4, ['...HHH...', '..HHHHH..', '..bbbbb..', 'hhhhhhhhh', '.hh......'], K);
+  } else if (def.hat === 'cap') {
+    if (!back) spmap(x0 - 1, fy - 3, ['.HHHH..', 'HHHXHH.', 'hhhhhhh', '....hhh'], K);
+    else spmap(x0 - 1, fy - 3, ['.HHHH..', 'HHHHHH.', 'hhhhhh.', '.......'], K);
+  } else if (def.hat === 'doorman') {
+    if (!back) spmap(x0 - 1, fy - 4, ['.HHHH.', 'HHHHHH', 'XXXXXX', 'hhhhhhh', '....hh.'], K);
+    else spmap(x0 - 1, fy - 4, ['.HHHH.', 'HHHHHH', 'XXXXXX', 'hhhhhh.', '......'], K);
+  } else if (def.hat === 'pillbox') {
+    spmap(x0, fy - 3, ['.HHH.', 'HHHHH'], K);
+  } else if (def.hat === 'homburg') {           // tall dented crown, brim curled up at both ends
+    if (!back) spmap(x0 - 2, fy - 5, ['...HHH...', '..HHhHH..', '..HHHHH..', '..bbbbb..', 'hhhhhhhhh', 'h.......h'], K);
+    else spmap(x0 - 2, fy - 5, ['...HHH...', '..HHhHH..', '..HHHHH..', '..bbbbb..', 'hhhhhhhhh', 'h.......h'], K);
+  } else if (def.hat === 'bowler') {            // round crown, narrow brim
+    if (!back) spmap(x0 - 1, fy - 4, ['..HHH..', '.HHHHH.', '.bbbbb.', 'hhhhhhh'], K);
+    else spmap(x0 - 1, fy - 4, ['..HHH..', '.HHHHH.', '.bbbbb.', 'hhhhhhh'], K);
+  } else if (def.hat === 'cloche') {            // bell-shaped, pulled down to the eyes
+    if (!back) spmap(x0 - 1, fy - 3, ['.HHHH..', 'HHHHHH.', 'HHHHHHh', 'hbbbh..', 'h......'], K);
+    else spmap(x0 - 1, fy - 3, ['..HHHH.', '.HHHHHH', 'hHHHHHH', '..hbbbh', '......h'], K);
+  } else if (def.hat === 'newsboy') {           // full flat cap, peak over the face
+    if (!back) spmap(x0 - 2, fy - 3, ['..HHHHH..', '.HHHHHHH.', 'HHHHHHHHh', '....hhhhh'], K);
+    else spmap(x0 - 2, fy - 3, ['..HHHHH..', '.HHHHHHH.', 'hHHHHHHHH', '.........'], K);
+  } else if (def.hat === 'beret') {             // flat, tilted toward the back of the head
+    if (!back) spmap(x0 - 2, fy - 3, ['..HHHH..', 'HHHHHHH.', 'hHHHHh..'], K);
+    else spmap(x0 - 1, fy - 3, ['..HHHH..', '.HHHHHHH', '..hHHHHh'], K);
+  }
+}
+// ------------------------------------------------------------------ animation sets
+// walk: 6 frames per cycle. idle: 2 (breath). talk: 2. reach: 1.
+const WALK_Q = [0, 0.7, 1, 0, -0.7, -1], WALK_BOB = [0, 0, 1, 0, 0, 1], WALK_LIFT = [0, 2, 0, 0, 1, 0];
+function buildPerson(def) {
+  const P = { def, front: {}, back: {} };
+  for (let dir = 0; dir < 2; dir++) {
+    const set = dir ? P.back : P.front;
+    set.idle = []; set.walk = []; set.talk = []; set.reach = [];
+    const stride = def.stride === undefined ? 1 : def.stride, bounce = def.bounce === undefined ? 1 : def.bounce;
+    for (let f = 0; f < 2; f++) { SF = newFrame(); drawFigure(def, { dir, q: 0, arm: 0, bob: f, lift: 0, style: def.idle }); set.idle.push(SF); }
+    for (let f = 0; f < 6; f++) {
+      SF = newFrame();
+      drawFigure(def, { dir, q: WALK_Q[f] * stride, arm: -WALK_Q[f], bob: Math.round(WALK_BOB[f] * bounce), lift: WALK_LIFT[f] });
+      set.walk.push(SF);
+    }
+    for (let f = 0; f < 2; f++) { SF = newFrame(); drawFigure(def, { dir, q: 0, arm: 0, bob: 0, talk: f }); set.talk.push(SF); }
+    SF = newFrame(); drawFigure(def, { dir, q: 0, arm: 0, bob: 0, reach: 1 }); set.reach.push(SF);
+    if (def.poses) for (const name in def.poses) {
+      set[name] = [];
+      for (const pz of def.poses[name]) { SF = newFrame(); drawFigure(def, Object.assign({ dir, q: 0, arm: 0, bob: 0 }, pz)); set[name].push(SF); }
+    }
+  }
+  SF = null;
+  return P;
+}
+
+// ------------------------------------------------------------------ the cast
+const CAST_DEFS = {
+  frank: { h: 31, body: 'coat', hat: 'fedora', hair: 'short', color: C.CREAM, name: 'Frank', face: { stubble: true, noseLen: 7 },
+           key: costume({ C: C.TAN, c: C.BRN, K: C.TANL, B: C.BRN, k: C.BRASS, H: C.ST1, h: C.ST0, b: C.INK,
+                          T: C.ST0, t: C.NAV, F: C.INK, W: C.CREAM, N: C.OX, A: C.HAIRD, a: C.HAIRL }) },
+  russo: { h: 29, body: 'skirt', hat: 'none', hair: 'bob', color: C.WL, name: 'Russo', face: { faceW: 11, jaw: 'round', jawW: 4 },
+           key: costume({ C: C.S1, c: C.S0, K: C.S2, T: C.S0, t: C.NAV, W: C.CREAM, A: C.HAIRD, a: C.HAIRL,
+                          F: C.INK, S: C.SKM, L: C.SKL, s: C.SKS, m: C.CRIM }) },
+  cop:   { h: 31, body: 'suit', hat: 'cap', hair: 'short', color: C.S2, name: 'Mulroney', face: { faceW: 14, jawW: 10, brow: 2 }, wide: 1,
+           key: costume({ C: C.PNV, c: C.DW, K: C.SLT, T: C.PNV, t: C.DW, H: C.PNV, h: C.DW, X: C.BRASS, W: C.S2, N: C.DW }) },
+  clerk: { h: 29, body: 'suit', hat: 'none', hair: 'slick', color: C.PALEY, name: 'Pell', face: { faceW: 10, jaw: 'point', jawW: 3, noseLen: 7, eyeGap: 4 },
+           key: costume({ C: C.OX, c: C.PLUM, K: C.CRIM, T: C.ST0, t: C.NAV, A: C.INK, a: C.ST1, W: C.CREAM, N: C.INK,
+                          S: C.SKL, s: C.SKM, L: C.CREAM }) },
+  doorman: { h: 32, body: 'long', hat: 'doorman', hair: 'short', color: C.CORAL, name: 'Gus', face: { faceW: 13, jawW: 9, noseLen: 5 }, wide: 1,
+           key: costume({ C: C.OX, c: C.PLUM, K: C.CRIM, H: C.OX, h: C.PLUM, X: C.BRASS, T: C.INK, t: C.INK,
+                          S: C.DSM, s: C.DSS, L: C.SKM, A: C.INK }) },
+  bartender: { h: 30, body: 'vest', hat: 'none', hair: 'bald', color: C.GLOW, name: 'Lou', face: { faceW: 13, jaw: 'round', jawW: 8, lines: true }, wide: 1,
+           key: costume({ C: C.INK, c: C.BLK, K: C.ST0, W: C.CREAM, N: C.CRIM, T: C.ST0, t: C.NAV, A: C.CRS }) },
+  salvi: { h: 30, body: 'suit', hat: 'fedora', hair: 'slick', color: C.CORAL, name: 'Mickey', face: { faceW: 12, jawW: 8, noseLen: 7, eyeGap: 5 }, wide: 1,
+           key: costume({ C: C.ST0, c: C.INK, K: C.ST1, T: C.ST0, t: C.INK, H: C.INK, h: C.BLK, b: C.OX, W: C.CREAM, N: C.CRIM }) },
+  goon:  { h: 32, body: 'suit', hat: 'fedora', hair: 'short', color: C.S2, name: 'Bruno', face: { faceW: 14, jawW: 11, eyeGap: 5 }, wide: 1,
+           key: costume({ C: C.NAV, c: C.BLK, K: C.SLT, T: C.NAV, t: C.BLK, H: C.NAV, h: C.BLK, W: C.S2, N: C.NAV }) },
+  teague: { h: 30, body: 'suit', hat: 'none', hair: 'short', color: C.BRASS, name: 'Teague', face: { faceW: 11, jaw: 'round', jawW: 5, eyeGap: 5 },
+           key: costume({ C: C.CREAM, c: C.CRS, K: C.WHITE, T: C.INK, t: C.BLK, W: C.WHITE, N: C.INK,
+                          S: C.DSM, s: C.DSS, L: C.SKM, A: C.INK, a: C.HAIRD }) },
+  mags:  { h: 27, body: 'dress', hat: 'none', hair: 'bun', color: C.LAV, name: 'Mags', face: { faceW: 11, jaw: 'point', jawW: 4, lines: true },
+           key: costume({ C: C.VIO, c: C.VDK, K: C.LAV, T: C.VIO, t: C.VDK, A: C.CRS, a: C.S2, W: C.CREAM }) },
+  vendor: { h: 29, body: 'suit', hat: 'cap', hair: 'short', color: C.PALEY, name: 'Sal', face: { faceW: 12, jaw: 'round', jawW: 7, freckles: true },
+           key: costume({ C: C.BRN, c: C.DBR, K: C.TAN, H: C.ST1, h: C.ST0, X: C.ST1, T: C.ST0, t: C.NAV }) },
+  // the Blue Comet's band and customers (no dialogue; 'play' bobs on the beat)
+  pianist: { h: 29, body: 'suit', hat: 'none', hair: 'slick', color: C.S2, name: 'Pianist',
+           key: costume({ C: C.INK, c: C.BLK, K: C.ST0, T: C.INK, t: C.BLK, W: C.CREAM, N: C.INK, S: C.DSM, s: C.DSS, L: C.SKM }),
+           poses: { play: [{ reach: 0.55 }, { reach: 0.7, bob: 1 }] } },
+  bassist: { h: 31, body: 'suit', hat: 'none', hair: 'short', color: C.S2, name: 'Bassist',
+           key: costume({ C: C.CREAM, c: C.CRS, K: C.WHITE, T: C.INK, t: C.BLK, W: C.WHITE, N: C.INK, A: C.HAIRD }),
+           poses: { play: [{ reach: 0.4, arm: 0.3 }, { reach: 0.4, arm: -0.3, bob: 1 }] } },
+  drummer: { h: 29, body: 'vest', hat: 'none', hair: 'short', color: C.S2, name: 'Drummer',
+           key: costume({ C: C.INK, c: C.BLK, K: C.ST0, W: C.CREAM, N: C.INK, T: C.ST0, t: C.NAV, S: C.SKS, s: C.DSS, L: C.SKM }),
+           poses: { play: [{ reach: 0.8, arm: 0.6 }, { reach: 0.3, arm: -0.6, bob: 1 }] } },
+  patronF: { h: 27, body: 'dress', hat: 'none', hair: 'bob', color: C.CORAL, name: 'Customer',
+           key: costume({ C: C.CRIM, c: C.OX, K: C.CORAL, T: C.CRIM, t: C.OX, A: C.INK, a: C.HAIRD }) },
+  patronM: { h: 30, body: 'suit', hat: 'fedora', hair: 'short', color: C.S2, name: 'Customer',
+           key: costume({ C: C.ST1, c: C.ST0, K: C.ST2, T: C.ST0, t: C.INK, H: C.BRN, h: C.DBR, W: C.CREAM, N: C.OX }) }
+};
+const CAST = {};
+function buildCast() { for (const id in CAST_DEFS) CAST[id] = buildPerson(CAST_DEFS[id]); }
+
+// @ts-check
+// =================================================================== PORTRAITS (bust, 64 x 72, generated like the dolls)
+// A portrait is drawn from the same definition as the character's doll (04_people.js): the same costume key, hat,
+// hair, body and signature features, plus a few facial measurements in def.face. So the doll and the portrait
+// always agree, and a signature feature (glasses, a scarf, a buttonhole flower) reads at both sizes.
+//
+// def.face (all optional; defaults follow the doll):
+//   faceW 10..14   half-width of the face in pixels        jaw 'square' | 'round' | 'point'   jawW 3..10  chin half-width
+//   noseLen 4..8   eyeGap 4..7 (eye centre from the middle)  brow 1 | 2 (thickness)
+//   lips (coloured lips)  lines (age lines)  stubble  freckles
+// Expressions: neutral, happy, wry, angry, worried, surprised. A second frame per expression has the mouth open,
+// for talking. Light comes from the left, like everywhere else in the game.
+const PORTRAIT_W = 64, PORTRAIT_H = 72;
+const PORTRAIT_EXPRS = ['neutral', 'happy', 'wry', 'angry', 'worried', 'surprised'];
+const PORTRAITS = {};                                   // cache: id|expr|open -> frame
+
+/** @param {any} def */
+function faceOf(def) {
+  const f = def.face || {}, fem = def.body === 'skirt' || def.body === 'dress';
+  return {
+    faceW: f.faceW || (def.wide ? 13 : fem ? 11 : 12), jaw: f.jaw || (fem ? 'round' : 'square'),
+    jawW: f.jawW !== undefined ? f.jawW : (def.wide ? 8 : fem ? 4 : 6), noseLen: f.noseLen || (fem ? 5 : 6),
+    eyeGap: f.eyeGap || (fem ? 5 : 6), brow: f.brow || (fem ? 1 : 2),
+    lips: f.lips !== undefined ? f.lips : fem, lines: !!f.lines, stubble: !!f.stubble, freckles: !!f.freckles
+  };
+}
+/**
+ * @param {any} def the character definition (CAST_DEFS entry)
+ * @param {string} expr one of PORTRAIT_EXPRS
+ * @param {boolean} open mouth open (talking)
+ */
+function drawPortrait(def, expr, open) {
+  const f = new Uint8Array(PORTRAIT_W * PORTRAIT_H).fill(T), K = def.key, F = faceOf(def), cx = 32;
+  const sig = (/** @type {string} */ n) => !!def.sig && def.sig.indexOf(n) >= 0;
+  /** @param {number} x @param {number} y @param {number|undefined} c */
+  function p(x, y, c) { if (c === undefined || c === T) return; x = Math.round(x); y = Math.round(y); if (x >= 0 && y >= 0 && x < PORTRAIT_W && y < PORTRAIT_H) f[y * PORTRAIT_W + x] = c; }
+  /** @param {number} x @param {number} y */
+  function g(x, y) { return (x < 0 || y < 0 || x >= PORTRAIT_W || y >= PORTRAIT_H) ? T : f[y * PORTRAIT_W + x]; }
+  const top = 14, eyeY = 32, chinY = 47, fw = F.faceW;
+  /** half-width of the face at row y, or -1 outside it @param {number} y */
+  function hw(y) {
+    if (y < top || y > chinY) return -1;
+    if (y < 31) { const t = (y - 31) / (31 - top + 0.5); return fw * Math.sqrt(Math.max(0, 1 - t * t)); }
+    const u = (y - 31) / (chinY - 31), pw = F.jaw === 'square' ? 3.2 : F.jaw === 'round' ? 1.7 : 1.05;
+    return fw + (F.jawW - fw) * Math.pow(u, pw);
+  }
+  // ---------------- hair behind the head
+  if (def.hair === 'bob' || def.hair === 'long') {
+    const bottom = def.hair === 'long' ? 62 : 46;
+    for (let y = 11; y <= bottom; y++) { const w = fw + 3 - (y > bottom - 6 ? (y - bottom + 6) * 0.6 : 0) - (y < 16 ? (16 - y) * 1.1 : 0); for (let x = -w; x <= w; x++) p(cx + x, y, (x < -w + 3 && y < 30) ? K.a : K.A); }
+  }
+  if (def.hair === 'curly') for (let y = 8; y <= 40; y++) { const w = fw + 4 - (y > 32 ? (y - 32) : 0) - (y < 13 ? (13 - y) * 1.2 : 0); for (let x = -w; x <= w; x++) p(cx + x, y, (hashi(Math.round(x) >> 1, y >> 1) & 3) === 0 ? K.a : K.A); }
+  if (def.hair === 'bun') for (let y = 6; y <= 18; y++) for (let x = -6; x <= 6; x++) if (x * x + (y - 12) * (y - 12) <= 34) p(cx - fw + 3 + x, y, (x < -2 && y < 11) ? K.a : K.A);
+  // ---------------- neck and body
+  for (let y = 40; y <= 60; y++) for (let x = -6; x <= 5; x++) p(cx + x, y, x > 1 ? K.s : K.S);
+  for (let y = 56; y < PORTRAIT_H; y++) {
+    const w = Math.min(31, 13 + (y - 56) * 1.7 + (def.wide ? 1 : 0));
+    for (let x = -w; x <= w; x++) p(cx + x, y, x < -w * 0.55 ? K.K : x > w * 0.4 ? K.c : K.C);
+  }
+  const fem = def.body === 'skirt' || def.body === 'dress';
+  if (def.body === 'vest') {                                               // waistcoat over a shirt, bow tie
+    for (let y = 56; y < PORTRAIT_H; y++) { const v = Math.min(9, 4 + (y - 56) * 0.4); for (let x = -v; x <= v; x++) p(cx + x, y, K.W); }
+    for (let x = -3; x <= 3; x++) p(cx + x, 57, K.N); p(cx - 4, 56, K.N); p(cx + 4, 56, K.N); p(cx - 4, 58, K.N); p(cx + 4, 58, K.N);
+  } else if (fem) {                                                        // neckline, no tie
+    for (let y = 56; y < 63; y++) { const v = 6 - (y - 56); for (let x = -v; x <= v; x++) p(cx + x, y, x > 1 ? K.s : K.S); }
+  } else {                                                                 // shirt, lapels, tie
+    for (let y = 56; y < PORTRAIT_H; y++) { const v = Math.min(6, (y - 55) * 0.5); for (let x = -v; x <= v; x++) p(cx + x, y, K.W); p(cx - v - 1, y, K.c); p(cx + v + 1, y, K.c); if (y > 57 && def.body !== 'long') { p(cx, y, K.N); if (y > 60) p(cx + 1, y, K.N); } }
+    if (def.body === 'coat' || def.body === 'long') for (let y = 52; y <= 58; y++) { p(cx - 9 + (y - 52) * 0.3, y, K.K); p(cx - 8 + (y - 52) * 0.3, y, K.C); p(cx + 8 - (y - 52) * 0.3, y, K.c); p(cx + 9 - (y - 52) * 0.3, y, K.c); }  // turned-up collar
+  }
+  if (sig('badge')) { p(cx - 15, 62, K.X); p(cx - 14, 62, K.X); p(cx - 15, 63, K.X); p(cx - 14, 63, C.HOT); }
+  if (sig('flower')) { p(cx - 10, 60, K.V); p(cx - 11, 61, K.V); p(cx - 9, 61, K.V); p(cx - 10, 62, K.V); p(cx - 10, 61, C.PALEY); p(cx - 10, 63, C.G2); }
+  if (sig('satchel')) for (let y = 56; y < PORTRAIT_H; y++) { const x = cx + 14 - (y - 56) * 1.6; p(x, y, K.P); p(x + 1, y, K.P); }
+  if (sig('scarf')) {
+    for (let y = 50; y <= 57; y++) { const w = 8 + (y - 50) * 0.4; for (let x = -w; x <= w; x++) p(cx + x, y, x > w * 0.4 ? C.PLUM : K.V); }
+    for (let y = 58; y < PORTRAIT_H; y++) for (let x = -12; x <= -7; x++) p(cx + x, y, ((y >> 1) & 1) ? K.V : C.PLUM);
+  }
+  // ---------------- ears and face
+  for (let y = eyeY - 1; y <= eyeY + 5; y++) { p(cx - fw - 1, y, K.S); p(cx - fw, y, K.S); p(cx + fw, y, K.s); p(cx + fw + 1, y, K.s); }
+  for (let y = top; y <= chinY; y++) { const w = hw(y); if (w < 0) continue; for (let x = -w; x <= w; x++) p(cx + x, y, x > w * 0.38 ? K.s : (x < -w * 0.55 && y > 22 && y < 41) ? K.L : K.S); }
+  for (let x = -4; x <= 4; x++) p(cx + x, chinY + 1, K.s);
+  // ---------------- brows
+  let bL = [0, 0, 0, 0], bR = [0, 0, 0, 0];
+  if (expr === 'angry') { bL = [-1, 0, 1, 2]; bR = [2, 1, 0, -1]; }
+  else if (expr === 'worried') { bL = [1, 0, -1, -1]; bR = [-1, -1, 0, 1]; }
+  else if (expr === 'surprised') { bL = [-2, -2, -2, -2]; bR = [-2, -2, -2, -2]; }
+  else if (expr === 'wry') bR = [-1, -2, -2, -1];
+  else if (expr === 'happy') { bL = [0, -1, -1, 0]; bR = [0, -1, -1, 0]; }
+  const by = eyeY - 3, ex1 = cx - F.eyeGap, ex2 = cx + F.eyeGap - 1;
+  for (let i = 0; i < 4; i++) { p(ex1 - 2 + i, by + bL[i], K.A); p(ex2 - 1 + i, by + bR[i], K.A); if (F.brow > 1) { p(ex1 - 2 + i, by + bL[i] - 1, K.A); p(ex2 - 1 + i, by + bR[i] - 1, K.A); } }
+  // ---------------- eyes
+  /** @param {number} x */
+  function eye(x) {
+    const lid = expr === 'angry', smile = expr === 'happy';
+    if (expr === 'surprised') { p(x - 1, eyeY - 1, C.CREAM); p(x, eyeY - 1, C.CREAM); p(x + 1, eyeY - 1, C.CREAM); }
+    if (smile) { p(x - 1, eyeY + 1, C.INK); p(x, eyeY, C.INK); p(x + 1, eyeY + 1, C.INK); return; }
+    if (lid) { p(x - 1, eyeY, K.s); p(x, eyeY, C.INK); p(x + 1, eyeY, C.INK); }
+    else { p(x - 1, eyeY, C.INK); p(x, eyeY, C.INK); p(x + 1, eyeY, C.INK); }
+    p(x - 1, eyeY + 1, C.CREAM); p(x, eyeY + 1, C.INK); p(x + 1, eyeY + 1, C.INK);
+    if (expr === 'worried') p(x, eyeY + 2, K.s);
+  }
+  eye(ex1); eye(ex2);
+  if (F.lines) { p(ex1 - 3, eyeY + 1, K.s); p(ex2 + 3, eyeY + 1, K.s); p(ex2 + 3, eyeY + 2, K.s); p(cx - 6, eyeY + 8, K.s); p(cx + 6, eyeY + 8, K.s); }
+  if (F.freckles) for (const [dx, dy] of [[-7, 5], [-5, 6], [-8, 7], [5, 5], [7, 6], [4, 7]]) p(cx + dx, eyeY + dy, K.s);
+  if (sig('glasses')) for (const ex of [ex1, ex2]) {
+    for (let x = ex - 3; x <= ex + 3; x++) { p(x, eyeY - 2, K.Y); p(x, eyeY + 3, K.Y); }
+    for (let y = eyeY - 1; y <= eyeY + 2; y++) { p(ex - 3, y, K.Y); p(ex + 3, y, K.Y); }
+    p(ex - 2, eyeY - 1, C.WL);
+    if (ex === ex1) for (let x = ex + 4; x < ex2 - 3; x++) p(x, eyeY, K.Y);
+  }
+  // ---------------- nose and mouth
+  const nt = eyeY + F.noseLen;
+  for (let y = eyeY + 1; y < nt; y++) p(cx + 1, y, K.s);
+  p(cx - 1, nt, K.s); p(cx, nt, K.S); p(cx + 1, nt, K.s); p(cx + 2, nt, K.s); p(cx - 2, nt + 1, K.s); p(cx + 2, nt + 1, K.s);
+  const my = nt + 4, mw = F.lips ? 2 : 3, m = F.lips ? K.m : K.s;
+  if (sig('moustache')) for (let x = -4; x <= 4; x++) { p(cx + x, my - 2, K.A); if (Math.abs(x) < 4) p(cx + x, my - 1, K.A); }
+  if (open || expr === 'surprised') {
+    for (let x = -mw + 1; x <= mw - 1; x++) { p(cx + x, my, C.INK); p(cx + x, my + 1, C.INK); }
+    p(cx - mw, my, m); p(cx + mw, my, m); p(cx - mw + 1, my + 2, m); p(cx + mw - 1, my + 2, m); p(cx, my + 2, m);
+  } else if (expr === 'happy') { for (let x = -mw + 1; x <= mw - 1; x++) p(cx + x, my + 1, m); p(cx - mw, my, m); p(cx + mw, my, m); }
+  else if (expr === 'wry') { for (let x = -mw; x <= 0; x++) p(cx + x, my, m); for (let x = 1; x <= mw + 1; x++) p(cx + x, my - 1, m); p(cx + mw + 2, my - 2, K.s); }
+  else if (expr === 'angry') { for (let x = -mw; x <= mw; x++) p(cx + x, my, m); p(cx - mw - 1, my + 1, m); p(cx + mw + 1, my + 1, m); }
+  else if (expr === 'worried') { for (let x = -mw + 1; x <= mw - 1; x++) p(cx + x, my, m); p(cx - mw, my + 1, m); p(cx + mw, my + 1, m); }
+  else for (let x = -mw; x <= mw; x++) p(cx + x, my, m);
+  if (F.lips && !open && expr !== 'surprised') { p(cx - 1, my + 1, C.OX); p(cx, my + 1, C.OX); p(cx + 1, my + 1, C.OX); }
+  if (def.idle === 'smoke' && !open) { for (let x = 3; x <= 8; x++) p(cx + x, my + 1, C.CREAM); p(cx + 9, my + 1, C.AMB); p(cx + 10, my, C.CRS); }
+  if (sig('beard')) for (let y = my - 1; y <= chinY + 2; y++) { const w = hw(Math.min(y, chinY)) + 1; for (let x = -w; x <= w; x++) { const q = g(cx + Math.round(x), y); if (y > my + 2 || Math.abs(x) > mw + 1) if (q !== C.INK && (Math.abs(x) > 4 || y > my + 2)) p(cx + x, y, (x + y) % 4 ? K.A : K.a); } }
+  if (F.stubble) for (let y = my - 1; y <= chinY; y++) { const w = hw(y); for (let x = -w + 1; x <= w - 1; x++) { const q = g(cx + Math.round(x), y); if (((x + y) & 1) === 0 && (y > my + 1 || Math.abs(x) > mw + 1) && y > nt + 1 && q !== C.INK && q !== m) p(cx + x, y, K.s); } }
+  // ---------------- hair in front
+  if (def.hair === 'short' || def.hair === 'slick') for (let y = top - 1; y <= top + 9; y++) { const w = hw(Math.max(top, y)) + 1; for (let x = -w; x <= w; x++) { const edge = Math.abs(x) > w - 3; if (y < top + 5 || (edge && y < top + 11)) p(cx + x, y, (x < -w * 0.3 && y < top + 4) || (def.hair === 'slick' && y === top + 1 && x < 4) ? K.a : K.A); } }
+  if (def.hair === 'bob' || def.hair === 'long') for (let y = top - 2; y <= top + 7; y++) { const w = hw(Math.max(top, y)) + 2; for (let x = -w; x <= w; x++) if (y < top + 3 || (x > -2 && y < top + 5 + (x > 2 ? 2 : 0)) || Math.abs(x) > w - 3) p(cx + x, y, (x < -w * 0.4 && y < top + 3) ? K.a : K.A); }
+  if (def.hair === 'bun') for (let y = top - 1; y <= top + 6; y++) { const w = hw(Math.max(top, y)) + 1; for (let x = -w; x <= w; x++) if (y < top + 3 || Math.abs(x) > w - 2) p(cx + x, y, x < -w * 0.3 ? K.a : K.A); }
+  if (def.hair === 'curly') for (let y = top - 3; y <= top + 5; y++) { const w = hw(Math.max(top, y)) + 3; for (let x = -w; x <= w; x++) if (y < top + 2 || Math.abs(x) > w - 4) p(cx + x, y, (hashi(Math.round(x) >> 1, y >> 1) & 3) === 0 ? K.a : K.A); }
+  if (def.hair === 'pomp') for (let y = top - 6; y <= top + 7; y++) { const w = hw(Math.max(top, y)) + 1 - (y < top - 2 ? (top - 2 - y) * 1.5 : 0); for (let x = -w; x <= w; x++) if (y < top + 4 || Math.abs(x) > w - 3) p(cx + x + (y < top ? 2 : 0), y, (x < -w * 0.2 && y < top + 2) ? K.a : K.A); }
+  if (def.hair === 'bald') for (let y = top + 6; y <= top + 14; y++) { const w = hw(y) + 1; p(cx - w, y, K.A); p(cx - w + 1, y, K.A); p(cx + w, y, K.A); p(cx + w - 1, y, K.A); }
+  // ---------------- hats
+  const hat = def.hat;
+  /** a crown from row y0 to y1, half-width w, with an optional band (rows bandY..bandY+1) @param {number} y0 @param {number} y1 @param {number} w @param {number} bandY */
+  function crown(y0, y1, w, bandY) { for (let y = y0; y <= y1; y++) { const ww = w - (y < y0 + 3 ? (y0 + 3 - y) : 0); for (let x = -ww; x <= ww; x++) p(cx + x, y, (y >= bandY && y <= bandY + 1) ? K.b : (x < -ww * 0.5 ? C.ST2 : x > ww * 0.4 ? K.h : K.H)); } }
+  /** @param {number} y0 @param {number} y1 @param {number} w */
+  function brim(y0, y1, w) { for (let y = y0; y <= y1; y++) { const ww = w - (y === y1 ? 2 : 0) - (y === y0 ? 1 : 0); for (let x = -ww; x <= ww; x++) p(cx + x, y, y >= y1 - 1 ? K.h : K.H); } }
+  /** shadow the hat throws on the forehead @param {number} y0 @param {number} y1 */
+  function shade(y0, y1) { for (let y = y0; y <= y1; y++) { const w = hw(y); for (let x = -w; x <= w; x++) { const q = g(cx + Math.round(x), y); if (q === K.S || q === K.L) p(cx + x, y, K.s); } } }
+  if (hat === 'fedora') { crown(6, 19, fw - 1, 16); for (let x = -3; x <= 3; x++) p(cx + x, 6, K.h); brim(19, 22, fw + 8); shade(23, 24); }
+  else if (hat === 'homburg') { crown(3, 19, fw - 1, 16); for (let x = -2; x <= 2; x++) p(cx + x, 4, K.h); brim(19, 21, fw + 6); p(cx - fw - 6, 18, K.H); p(cx + fw + 6, 18, K.h); shade(22, 23); }
+  else if (hat === 'bowler') { for (let y = 5; y <= 19; y++) { const t = (y - 13) / 9, w = (fw - 1) * Math.sqrt(Math.max(0, 1 - t * t * (y < 13 ? 1 : 0))); for (let x = -w; x <= w; x++) p(cx + x, y, (y >= 16 && y <= 17) ? K.b : x < -w * 0.4 ? C.ST2 : x > w * 0.4 ? K.h : K.H); } brim(19, 21, fw + 4); shade(22, 23); }
+  else if (hat === 'cloche') { for (let y = 8; y <= 27; y++) { const t = (y - 20) / 13, w = (fw + 2) * Math.sqrt(Math.max(0, 1 - (y < 20 ? t * t : 0))); for (let x = -w; x <= w; x++) p(cx + x, y, (y >= 22 && y <= 23) ? K.b : x < -w * 0.4 ? C.ST2 : x > w * 0.4 ? K.h : K.H); } shade(28, 29); }
+  else if (hat === 'newsboy') { for (let y = 8; y <= 20; y++) { const w = fw + 3 - (y < 11 ? (11 - y) * 2 : 0); for (let x = -w; x <= w; x++) p(cx + x + 1, y, x < -w * 0.4 ? C.ST2 : x > w * 0.5 ? K.h : K.H); } for (let x = -fw + 1; x <= fw + 1; x++) { p(cx + x, 21, K.h); p(cx + x, 22, C.INK); } shade(23, 24); }
+  else if (hat === 'beret') { for (let y = 7; y <= 17; y++) { const w = fw + 4 - Math.abs(y - 12) * 0.9; for (let x = -w; x <= w; x++) p(cx + x - 3, y, x > w * 0.5 ? K.h : K.H); } p(cx - 3, 6, K.h); p(cx - 3, 5, K.h); }
+  else if (hat === 'cap' || hat === 'doorman') { crown(7, 19, fw, 15); if (hat === 'cap') { p(cx, 11, K.X); p(cx - 1, 12, K.X); p(cx + 1, 12, K.X); } else { p(cx, 11, K.b); } for (let y = 20; y <= 21; y++) for (let x = -fw + 2; x <= fw + 3; x++) p(cx + x, y, C.INK); shade(22, 23); }
+  else if (hat === 'pillbox') { for (let y = 8; y <= 14; y++) for (let x = -7; x <= 7; x++) p(cx + x - 4, y, x > 3 ? K.h : K.H); }
+  // ---------------- outline
+  const src = f.slice();
+  for (let y = 0; y < PORTRAIT_H; y++) for (let x = 0; x < PORTRAIT_W; x++) {
+    if (src[y * PORTRAIT_W + x] !== T) continue;
+    const n = (x > 0 && src[y * PORTRAIT_W + x - 1] !== T) || (x < PORTRAIT_W - 1 && src[y * PORTRAIT_W + x + 1] !== T) ||
+              (y > 0 && src[(y - 1) * PORTRAIT_W + x] !== T) || (y < PORTRAIT_H - 1 && src[(y + 1) * PORTRAIT_W + x] !== T);
+    if (n) f[y * PORTRAIT_W + x] = K.o;
+  }
+  return f;
+}
+/** the portrait of a cast member, cached @param {string} id @param {string} expr @param {boolean} [open] */
+function portraitOf(id, expr, open) {
+  const k = id + '|' + expr + '|' + (open ? 1 : 0);
+  return PORTRAITS[k] || (PORTRAITS[k] = drawPortrait(CAST_DEFS[id], expr, !!open));
+}
+
+// =================================================================== CHARACTER EDITOR
+// Edits one CAST_DEFS entry and shows what the game will draw from it: the doll in four directions, walking and
+// talking, under venetian-blind light, its portrait in every expression, and its silhouette against the cast.
+// The drawing code is the game's own (01_core, 03_iso, 04_people, 13_portraits are built into this page), so
+// what you see here is what you get. "Copy definition" gives the line to paste into src/04_people.js.
+
+// ------------------------------------------------------------------ what can be edited
+const SLOT_INFO = { C: 'garment', c: 'garment shadow', K: 'garment light', T: 'trousers / skirt', t: 'trousers shadow', W: 'shirt', N: 'tie',
+  B: 'belt', k: 'buckle', F: 'shoes', H: 'hat', h: 'hat shadow', b: 'hat band', S: 'skin', s: 'skin shadow', L: 'skin light',
+  A: 'hair', a: 'hair light', e: 'eyes', m: 'mouth / lips', G: 'gloves', X: 'buttons, badge', Y: 'glasses', V: 'scarf, flower', P: 'cane, bag, case', o: 'outline' };
+const BODY = ['coat', 'long', 'suit', 'vest', 'skirt', 'dress'];
+const HATS = ['none', 'fedora', 'homburg', 'bowler', 'cloche', 'newsboy', 'beret', 'cap', 'doorman', 'pillbox'];
+const HAIR = ['short', 'slick', 'bob', 'bun', 'bald', 'long', 'curly', 'pomp'];
+const IDLE = ['', 'pockets', 'crossed', 'hips', 'smoke'];
+const SIGS = ['glasses', 'moustache', 'beard', 'scarf', 'flower', 'badge', 'satchel', 'cane', 'case'];
+const SLIDERS = [   // [field, label, min, max, step, default]
+  ['h', 'height', 24, 36, 1, 30], ['neck', 'neck', 0, 2, 1, 0], ['shoulders', 'shoulders', -1, 2, 1, 0], ['belly', 'belly', 0, 2, 1, 0],
+  ['flare', 'coat flare', 0, 3, 0.1, 1.4], ['stance', 'stance', 0, 2, 1, 0], ['lean', 'lean', -1, 1, 1, 0],
+  ['stride', 'stride', 0.5, 1.8, 0.1, 1], ['bounce', 'bounce', 0, 2, 1, 1]];
+const FACE = [      // portrait only: [field, label, min, max, step]
+  ['faceW', 'face width', 9, 14, 1], ['jawW', 'chin width', 2, 11, 1], ['noseLen', 'nose', 4, 8, 1], ['eyeGap', 'eye spacing', 4, 7, 1], ['brow', 'brow', 1, 2, 1]];
+const FACE_FLAGS = ['lips', 'lines', 'stubble', 'freckles'];
+const CNAME = []; for (const k in C) CNAME[C[k]] = k;      // palette index -> C.NAME
+const DEFAULT_KEY = costume({});
+
+// original example characters (not the game's cast): starting points that show what the options do
+const EXAMPLES = {
+  undertaker: { h: 34, body: 'long', hat: 'homburg', hair: 'short', name: 'Undertaker', neck: 1, shoulders: 1, lean: -1, idle: 'crossed', sig: ['moustache'], face: { faceW: 10, jaw: 'point', jawW: 3, noseLen: 8, lines: true }, key: { C: C.INK, c: C.BLK, K: C.ST0, H: C.INK, h: C.BLK, b: C.OX } },
+  sergeant: { h: 28, body: 'suit', hat: 'bowler', hair: 'short', name: 'Desk sergeant', wide: 1, belly: 2, stance: 1, idle: 'hips', sig: ['badge'], face: { faceW: 14, jawW: 10 }, key: { C: C.BRN, c: C.DBR, K: C.TAN, H: C.INK, h: C.BLK } },
+  singer: { h: 29, body: 'dress', hat: 'cloche', hair: 'bob', name: 'Torch singer', flare: 2.5, idle: 'smoke', sig: ['flower'], face: { faceW: 11, jaw: 'round', jawW: 4, lips: true }, key: { C: C.CRIM, c: C.OX, K: C.CORAL, H: C.INK, h: C.BLK, b: C.BRASS, V: C.CREAM, m: C.CRIM } },
+  paperboy: { h: 27, body: 'coat', hat: 'newsboy', hair: 'short', name: 'Paperboy', shoulders: -1, lean: 1, stride: 1.4, bounce: 2, idle: 'pockets', sig: ['scarf', 'satchel'], face: { faceW: 11, jaw: 'round', jawW: 5, freckles: true }, key: { C: C.G1, c: C.G0, K: C.G2, H: C.ST1, h: C.ST0, V: C.CRIM } },
+  professor: { h: 33, body: 'suit', hat: 'none', hair: 'curly', name: 'Professor', neck: 2, stride: 0.8, sig: ['glasses', 'case'], face: { faceW: 11, noseLen: 7, eyeGap: 5 }, key: { C: C.CREAM, c: C.CRS, K: C.WHITE, A: C.INK, S: C.DSM, s: C.DSS, L: C.SKM } },
+  painter: { h: 27, body: 'skirt', hat: 'beret', hair: 'long', name: 'Painter', idle: 'hips', sig: ['scarf'], face: { faceW: 11, jaw: 'round', jawW: 4 }, key: { C: C.LAV, c: C.VIO, K: C.WHITE, H: C.RED, h: C.CRIM, A: C.HAIRL, V: C.PALEY } },
+  colonel: { h: 30, body: 'coat', hat: 'none', hair: 'pomp', name: 'Old colonel', stance: 2, stride: 0.7, sig: ['cane', 'beard'], face: { faceW: 12, jawW: 7, lines: true }, key: { C: C.ST1, c: C.ST0, K: C.ST2, A: C.CRS, a: C.S2 } }
+};
+
+// ------------------------------------------------------------------ state
+let cur = null, curId = 'newcharacter', expr = 'neutral', talkOn = true, pickSlot = null;
+const DRAFTS_KEY = 'hourglass_character_drafts';
+function clone(o) { return JSON.parse(JSON.stringify(o)); }
+function load(id, def) {
+  curId = id;
+  cur = clone(Object.assign({ h: 30, body: 'suit', hat: 'none', hair: 'short' }, def));
+  cur.key = Object.assign({}, DEFAULT_KEY, def.key || {});
+  cur.sig = (def.sig || []).slice(); cur.face = Object.assign({}, def.face || {});
+  if (!cur.name) cur.name = id;
+  buildSide(); redraw();
+}
+function defForGame() {
+  const d = clone(cur);
+  if (!d.sig.length) delete d.sig;
+  if (!d.idle) delete d.idle;
+  return d;
+}
+
+// ------------------------------------------------------------------ the definition as source text
+function fmtVal(k, v) {
+  if (typeof v === 'boolean') return String(v);
+  if (typeof v === 'string') return "'" + v.replace(/'/g, "\\'") + "'";
+  if (Array.isArray(v)) return '[' + v.map(x => fmtVal('', x)).join(', ') + ']';
+  return String(+(+v).toFixed(2));
+}
+function sourceText() {
+  const d = cur, parts = [];
+  parts.push('h: ' + d.h, "body: '" + d.body + "'", "hat: '" + d.hat + "'", "hair: '" + d.hair + "'");
+  parts.push('color: C.' + (CNAME[d.color] || 'CREAM'), "name: " + fmtVal('', d.name || curId));
+  const face = Object.keys(d.face).filter(k => d.face[k] !== undefined && d.face[k] !== false);
+  if (face.length) parts.push('face: { ' + face.map(k => k + ': ' + fmtVal(k, d.face[k])).join(', ') + ' }');
+  if (d.wide) parts.push('wide: 1');
+  for (const [f, , , , , def] of SLIDERS) if (f !== 'h' && d[f] !== undefined && d[f] !== def) parts.push(f + ': ' + fmtVal(f, d[f]));
+  if (d.idle) parts.push("idle: '" + d.idle + "'");
+  if (d.sig.length) parts.push('sig: ' + fmtVal('', d.sig));
+  const key = Object.keys(d.key).filter(k => d.key[k] !== DEFAULT_KEY[k]).map(k => k + ': C.' + CNAME[d.key[k]]);
+  parts.push('key: costume({ ' + key.join(', ') + ' })');
+  // wrap like the game's own definitions: about 120 characters a line
+  const lines = []; let line = '  ' + curId + ': { ';
+  for (let i = 0; i < parts.length; i++) {
+    const piece = parts[i] + (i < parts.length - 1 ? ', ' : ' },');
+    if (line.length + piece.length > 120 && line.trim().length > curId.length + 4) { lines.push(line.trimEnd()); line = '           '; }
+    line += piece;
+  }
+  lines.push(line);
+  return lines.join('\n');
+}
+
+// ------------------------------------------------------------------ controls
+function el(tag, attrs, kids) {
+  const e = document.createElement(tag);
+  for (const k in attrs || {}) { if (k === 'text') e.textContent = attrs[k]; else if (k.startsWith('on')) e.addEventListener(k.slice(2), attrs[k]); else e.setAttribute(k, attrs[k]); }
+  for (const c of kids || []) e.appendChild(c);
+  return e;
+}
+function selectRow(label, id, options, value, onChange) {
+  const s = el('select', { id, onchange: () => onChange(s.value) }, options.map(o => el('option', { value: o, text: o || '(none)' })));
+  s.value = value;
+  return el('div', { class: 'row' }, [el('label', { for: id, text: label }), s, el('span')]);
+}
+function sliderRow(label, id, min, max, step, value, onChange) {
+  const out = el('output', { text: String(value) });
+  const r = el('input', { type: 'range', id, min, max, step, value, oninput: () => { out.textContent = r.value; onChange(+r.value); } });
+  return el('div', { class: 'row' }, [el('label', { for: id, text: label }), r, out]);
+}
+function buildSide() {
+  const side = document.getElementById('side'); side.textContent = '';
+  side.appendChild(el('h1', { text: 'Character editor' }));
+  // start from
+  const starts = [''].concat(Object.keys(CAST_DEFS).map(k => 'cast:' + k), Object.keys(EXAMPLES).map(k => 'example:' + k), Object.keys(drafts()).map(k => 'draft:' + k));
+  side.appendChild(selectRow('start from', 'start', starts, '', v => {
+    if (!v) return; const [kind, id] = v.split(':');
+    load(id, kind === 'cast' ? CAST_DEFS[id] : kind === 'example' ? EXAMPLES[id] : drafts()[id]);
+  }));
+  const idIn = el('input', { type: 'text', id: 'cid', value: curId, oninput: () => { curId = idIn.value.replace(/\W/g, '') || 'newcharacter'; redraw(); } });
+  side.appendChild(el('div', { class: 'row' }, [el('label', { for: 'cid', text: 'id' }), idIn, el('span')]));
+  const nm = el('input', { type: 'text', id: 'cname', value: cur.name || '', oninput: () => { cur.name = nm.value; redraw(); } });
+  side.appendChild(el('div', { class: 'row' }, [el('label', { for: 'cname', text: 'name' }), nm, el('span')]));
+
+  side.appendChild(el('h2', { text: 'Silhouette' }));
+  side.appendChild(selectRow('body', 'body', BODY, cur.body, v => { cur.body = v; redraw(); }));
+  side.appendChild(selectRow('hat', 'hat', HATS, cur.hat, v => { cur.hat = v; redraw(); }));
+  side.appendChild(selectRow('hair', 'hair', HAIR, cur.hair, v => { cur.hair = v; redraw(); }));
+  side.appendChild(selectRow('stands', 'idle', IDLE, cur.idle || '', v => { cur.idle = v || undefined; redraw(); }));
+  for (const [f, label, min, max, step, def] of SLIDERS) side.appendChild(sliderRow(label, 'f_' + f, min, max, step, cur[f] === undefined ? def : cur[f], v => { cur[f] = v; redraw(); }));
+  const wide = el('input', { type: 'checkbox', id: 'wide', onchange: () => { cur.wide = wide.checked ? 1 : 0; redraw(); } }); wide.checked = !!cur.wide;
+  side.appendChild(el('div', { class: 'checks' }, [el('label', {}, [wide, document.createTextNode('stocky (wide)')])]));
+
+  side.appendChild(el('h2', { text: 'Signature features (doll and portrait)' }));
+  side.appendChild(el('div', { class: 'checks' }, SIGS.map(s => {
+    const c = el('input', { type: 'checkbox', onchange: () => { cur.sig = SIGS.filter(x => x === s ? c.checked : cur.sig.includes(x)); redraw(); } }); c.checked = cur.sig.includes(s);
+    return el('label', {}, [c, document.createTextNode(s)]);
+  })));
+
+  side.appendChild(el('h2', { text: 'Face (portrait only)' }));
+  const F = faceOf(defForGame());
+  side.appendChild(selectRow('jaw', 'jaw', ['square', 'round', 'point'], cur.face.jaw || F.jaw, v => { cur.face.jaw = v; redraw(); }));
+  for (const [f, label, min, max, step] of FACE) side.appendChild(sliderRow(label, 'p_' + f, min, max, step, cur.face[f] !== undefined ? cur.face[f] : F[f], v => { cur.face[f] = v; redraw(); }));
+  side.appendChild(el('div', { class: 'checks' }, FACE_FLAGS.map(f => {
+    const c = el('input', { type: 'checkbox', onchange: () => { cur.face[f] = c.checked; redraw(); } }); c.checked = !!F[f];
+    return el('label', {}, [c, document.createTextNode(f)]);
+  })));
+
+  side.appendChild(el('h2', { text: 'Colours (click a slot, then a colour)' }));
+  const slots = el('div', { class: 'slots' });
+  for (const k in SLOT_INFO) slots.appendChild(el('button', { class: 'slot', type: 'button', 'aria-pressed': String(pickSlot === k), onclick: () => { pickSlot = pickSlot === k ? null : k; buildSide(); } },
+    [el('span', { class: 'sw', style: 'background:#' + PAL_HEX[cur.key[k]] }), el('b', { text: k }), document.createTextNode(SLOT_INFO[k])]));
+  const speak = el('button', { class: 'slot', type: 'button', 'aria-pressed': String(pickSlot === '$color'), onclick: () => { pickSlot = pickSlot === '$color' ? null : '$color'; buildSide(); } },
+    [el('span', { class: 'sw', style: 'background:#' + PAL_HEX[cur.color === undefined ? C.CREAM : cur.color] }), el('b', { text: '"' }), document.createTextNode('speech colour')]);
+  slots.appendChild(speak);
+  side.appendChild(slots);
+  if (pickSlot) {
+    const pal = el('div', { class: 'palette', role: 'group', 'aria-label': 'Palette' });
+    PAL_HEX.forEach((h, i) => pal.appendChild(el('button', { type: 'button', title: 'C.' + CNAME[i], style: 'background:#' + h, 'aria-label': 'C.' + CNAME[i],
+      onclick: () => { if (pickSlot === '$color') cur.color = i; else cur.key[pickSlot] = i; buildSide(); redraw(); } })));
+    side.appendChild(pal);
+  }
+}
+
+// ------------------------------------------------------------------ previews
+const VIEW = {};
+function card(title, id, note, wide) {
+  const c = el('section', { class: 'card' + (wide ? ' wide' : '') }, [el('h2', { text: title }), el('div', { class: 'stage', id })]);
+  if (note) c.appendChild(el('p', { class: 'note', text: note }));
+  return c;
+}
+function canvas(parent, w, h, scale) { const cv = el('canvas', { width: w, height: h }); cv.style.width = (w * scale) + 'px'; parent.appendChild(cv); return cv; }
+function buildMain() {
+  const main = document.getElementById('main');
+  main.appendChild(card('Doll: SE · SW · NE · NW', 'dirs', 'SW and NW are mirror images of SE and NE, as in the game.'));
+  main.appendChild(card('Walking and talking', 'walk', 'Walk cycle front and back, then the talking gesture.'));
+  main.appendChild(card('Under the blinds', 'light', 'Lit row by row with the game\'s own light steps, as slatted light sweeps across.'));
+  const pc = card('Portrait', 'portrait');
+  const btns = el('div', { class: 'btns', role: 'group', 'aria-label': 'Expression' });
+  for (const e of PORTRAIT_EXPRS) btns.appendChild(el('button', { type: 'button', 'aria-pressed': String(e === expr), text: e, onclick: (ev) => { expr = e; for (const b of btns.children) b.setAttribute('aria-pressed', String(b === ev.target)); redraw(); } }));
+  const talk = el('button', { type: 'button', 'aria-pressed': 'true', text: 'talking', onclick: () => { talkOn = !talkOn; talk.setAttribute('aria-pressed', String(talkOn)); } });
+  btns.appendChild(talk); pc.appendChild(btns); main.appendChild(pc);
+  main.appendChild(card('Silhouette against the cast', 'lineup', 'Top: solid black, the way a figure reads across a dark room. If you can still tell this one (left, outlined) from everyone else, the silhouette works. Bottom: the same in colour.', true));
+  const ex = el('section', { class: 'card wide' }, [el('h2', { text: 'Definition for src/04_people.js' })]);
+  const ta = el('textarea', { id: 'code', spellcheck: 'false', 'aria-label': 'Definition source' }); ex.appendChild(ta);
+  ex.appendChild(el('div', { class: 'btns' }, [
+    el('button', { type: 'button', text: 'Copy definition', onclick: copyCode }),
+    el('button', { type: 'button', text: 'Save draft', onclick: saveDraft }),
+    el('button', { type: 'button', text: 'Load from the text above', onclick: loadFromText })]));
+  ex.appendChild(el('p', { class: 'note', text: 'Paste the copied line into CAST_DEFS in src/04_people.js, then rebuild. "Load from the text above" reads a definition you pasted in (one CAST_DEFS entry). Drafts stay in this browser only.' }));
+  main.appendChild(ex);
+  VIEW.dirs = canvas(document.getElementById('dirs'), SPR_W * 4 + 18, SPR_H, 4);
+  VIEW.walk = canvas(document.getElementById('walk'), SPR_W * 3 + 12, SPR_H, 4);
+  VIEW.light = canvas(document.getElementById('light'), 96, SPR_H + 6, 4);
+  VIEW.portrait = canvas(document.getElementById('portrait'), PORTRAIT_W, PORTRAIT_H, 4);
+  const n = Object.keys(CAST_DEFS).length + 1;
+  VIEW.lineup = canvas(document.getElementById('lineup'), n * (SPR_W - 6), SPR_H * 2 + 4, 3);
+}
+
+// ------------------------------------------------------------------ drawing into a canvas
+function blitFrame(img, frame, fw, fh, ox, oy, opts) {
+  const W = img.width, d = img.data;
+  for (let y = 0; y < fh; y++) for (let x = 0; x < fw; x++) {
+    let c = frame[y * fw + (opts && opts.flip ? fw - 1 - x : x)]; if (c === T) continue;
+    const X = ox + x, Y = oy + y; if (X < 0 || Y < 0 || X >= W || Y >= img.height) continue;
+    if (opts && opts.map) c = opts.map(c, x, y);
+    const i = (Y * W + X) * 4, h = opts && opts.black ? '000000' : PAL_HEX[c];
+    d[i] = parseInt(h.slice(0, 2), 16); d[i + 1] = parseInt(h.slice(2, 4), 16); d[i + 2] = parseInt(h.slice(4, 6), 16); d[i + 3] = 255;
+  }
+}
+function clear(cv, hex) {
+  const ctx = cv.getContext('2d'), img = ctx.createImageData(cv.width, cv.height);
+  if (hex) for (let i = 0; i < img.data.length; i += 4) { img.data[i] = parseInt(hex.slice(0, 2), 16); img.data[i + 1] = parseInt(hex.slice(2, 4), 16); img.data[i + 2] = parseInt(hex.slice(4, 6), 16); img.data[i + 3] = 255; }
+  return { ctx, img };
+}
+let person = null, castPeople = null;
+function redraw() {
+  try { person = buildPerson(defForGame()); } catch (e) { toast('Could not draw: ' + e.message); return; }
+  for (const k in PCACHE) delete PCACHE[k];
+  if (!castPeople) { castPeople = {}; for (const id in CAST_DEFS) castPeople[id] = buildPerson(CAST_DEFS[id]); }
+  // lineup is static: draw it here; the rest animates
+  const { ctx, img } = clear(VIEW.lineup, '1b1a2a'), step = SPR_W - 6;
+  const all = [person].concat(Object.values(castPeople));
+  all.forEach((P, i) => {
+    blitFrame(img, P.front.idle[0], SPR_W, SPR_H, i * step - 3, 0, { black: true });
+    blitFrame(img, P.front.idle[0], SPR_W, SPR_H, i * step - 3, SPR_H + 4);
+  });
+  for (let x = 0; x < step - 1; x++) for (const y of [0, SPR_H * 2 + 3]) { const q = (y * img.width + x) * 4; img.data[q] = 242; img.data[q + 1] = 184; img.data[q + 2] = 110; img.data[q + 3] = 255; }
+  ctx.putImageData(img, 0, 0);
+  const code = document.getElementById('code'); if (code && document.activeElement !== code) code.value = sourceText();
+}
+function frameAt(t) {
+  const P = person; if (!P) return;
+  const tick = Math.floor(t / (1000 / 60));
+  // four directions, idle breathing
+  let v = clear(VIEW.dirs, '07060a'), idle = Math.floor(tick / 50) % 2;
+  blitFrame(v.img, P.front.idle[idle], SPR_W, SPR_H, 0, 0);
+  blitFrame(v.img, P.front.idle[idle], SPR_W, SPR_H, SPR_W + 6, 0, { flip: true });
+  blitFrame(v.img, P.back.idle[idle], SPR_W, SPR_H, (SPR_W + 6) * 2, 0);
+  blitFrame(v.img, P.back.idle[idle], SPR_W, SPR_H, (SPR_W + 6) * 3, 0, { flip: true });
+  v.ctx.putImageData(v.img, 0, 0);
+  // walk front, walk back, talk
+  v = clear(VIEW.walk, '07060a'); const wf = Math.floor(t / 130) % 6, tf = Math.floor(tick / 7) % 2;
+  blitFrame(v.img, P.front.walk[wf], SPR_W, SPR_H, 0, 0);
+  blitFrame(v.img, P.back.walk[wf], SPR_W, SPR_H, SPR_W + 6, 0);
+  blitFrame(v.img, P.front.talk[tf], SPR_W, SPR_H, (SPR_W + 6) * 2, 0);
+  v.ctx.putImageData(v.img, 0, 0);
+  // under the blinds: slats of warm light sweep down the figure; everything else in cool shadow
+  v = clear(VIEW.light, '07060a');
+  const off = (t / 1000) * 3.2;
+  for (let x = 0; x < 96; x++) for (let y = SPR_H - 2; y < SPR_H + 6; y++) { const i = (y * 96 + x) * 4, h = PAL_HEX[lightPix(C.WOOD, x, y, off, y)]; v.img.data[i] = parseInt(h.slice(0, 2), 16); v.img.data[i + 1] = parseInt(h.slice(2, 4), 16); v.img.data[i + 2] = parseInt(h.slice(4, 6), 16); v.img.data[i + 3] = 255; }
+  blitFrame(v.img, P.front.idle[idle], SPR_W, SPR_H, 8, 0, { map: (c, x, y) => lightPix(c, x + 8, y, off, y) });
+  blitFrame(v.img, P.back.idle[idle], SPR_W, SPR_H, 50, 0, { flip: true, map: (c, x, y) => lightPix(c, x + 50, y, off, y) });
+  v.ctx.putImageData(v.img, 0, 0);
+  // portrait, mouth moving while "talking"
+  v = clear(VIEW.portrait, '07060a');
+  blitFrame(v.img, drawPortraitCached(expr, talkOn && Math.floor(t / 160) % 2 === 1), PORTRAIT_W, PORTRAIT_H, 0, 0);
+  v.ctx.putImageData(v.img, 0, 0);
+}
+const PCACHE = {};
+function drawPortraitCached(e, open) { const k = e + (open ? 1 : 0); return PCACHE[k] || (PCACHE[k] = drawPortrait(defForGame(), e, open)); }
+function lightPix(c, x, y, off, row) {
+  const z = (SPR_BY - row) / ZH, ph = frac(z / 0.2 + off * 0.25);
+  const level = -1.2 + (ph < 0.5 ? 2.0 : 0) + (x < 48 ? 0.2 : 0);
+  return quantLight(c, level, bay(x, y));
+}
+
+// ------------------------------------------------------------------ export, drafts, import
+function toast(msg) { const t = document.getElementById('toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => { t.hidden = true; }, 2200); }
+function copyCode() {
+  const text = sourceText(), ta = document.getElementById('code'); ta.value = text;
+  const done = () => toast('Copied. Paste it into CAST_DEFS.');
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, () => { ta.select(); toast('Select-all done: press Ctrl+C.'); });
+  else { ta.select(); toast('Press Ctrl+C to copy.'); }
+}
+function drafts() { try { return JSON.parse(localStorage.getItem(DRAFTS_KEY) || '{}'); } catch (e) { return {}; } }
+function saveDraft() {
+  const all = drafts(); all[curId] = defForGame();
+  try { localStorage.setItem(DRAFTS_KEY, JSON.stringify(all)); toast('Saved draft "' + curId + '" in this browser.'); buildSide(); } catch (e) { toast('This browser blocks storage: copy the definition instead.'); }
+}
+function loadFromText() {
+  const text = document.getElementById('code').value.trim().replace(/,\s*$/, '');
+  const m = text.match(/^(\w+)\s*:\s*([\s\S]*)$/);
+  try {
+    const def = Function('C', 'costume', '"use strict"; return (' + (m ? m[2] : text) + ');')(C, (o) => Object.assign({}, o));
+    load(m ? m[1] : curId, def); toast('Loaded.');
+  } catch (e) { toast('Could not read that: ' + e.message); }
+}
+
+// ------------------------------------------------------------------ start
+buildMain();
+load('newcharacter', EXAMPLES.undertaker);
+(function loop(t) { frameAt(t); requestAnimationFrame(loop); })(0);
+window.__editor = { get cur() { return cur; }, load, sourceText, EXAMPLES };
+
+</script>
+</body>
+</html>

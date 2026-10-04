@@ -36,7 +36,7 @@ something three files away without any warning.
 3. **Name the numbers that matter across files.** A constant used in more than one place, or one a designer will
    tune, gets a name and a comment where it is declared (`WALK_SPEED`, `ACTOR_DEPTH`, `DITHER_SPREAD`). A
    coordinate inside one room's `build()` stays a number.
-4. **New files start with `// @ts-check`.** The type checker then runs on them (`npm run typecheck`). Write a
+4. **New game source files start with `// @ts-check`.** The type checker then runs on them (`npm run typecheck`). Write a
    JSDoc type where inference gives up (`/** @type {number[]} */`). Old files are not checked: turning it on
    shows about 40 complaints, almost all about mixed-type script arrays, and fixing them is not worth the churn.
 5. **Pure parts get unit tests.** Projection, lighting, the people builder, pathfinding and the notebook have

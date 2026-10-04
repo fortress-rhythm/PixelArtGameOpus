@@ -1,7 +1,7 @@
 // Builds the single-file games by concatenating their sources. Plain Node, so it runs the same on Windows,
 // macOS and Linux (the old build_*.sh scripts needed a POSIX shell).
 //   node tools/build.js            build everything
-//   node tools/build.js city       one target: city | test | garden
+//   node tools/build.js city       one target: city | test | garden | editor
 //   node tools/build.js --watch    rebuild whatever a saved source file belongs to
 const fs = require('fs'), path = require('path');
 const ROOT = path.join(__dirname, '..');
@@ -16,7 +16,11 @@ const TARGETS = {
   city:   () => ({ out: 'hourglass_city.html', head: 'src/00_head.html', files: jsIn('src'), nl: true, dirs: ['src'] }),
   test:   () => ({ out: 'hourglass_testlevel.html', head: 'src_test/t00_head.html',
                    files: SHARED.map(f => 'src/' + f + '.js').concat(jsIn('src_test')), nl: true, dirs: ['src', 'src_test'] }),
-  garden: () => ({ out: 'ravenshore_garden.html', head: 'src_garden/00_head.html', files: jsIn('src_garden'), nl: false, dirs: ['src_garden'] })
+  garden: () => ({ out: 'ravenshore_garden.html', head: 'src_garden/00_head.html', files: jsIn('src_garden'), nl: false, dirs: ['src_garden'] }),
+  // the character editor draws with the game's own code
+  editor: () => ({ out: 'character_editor.html', head: 'tools/character_editor/head.html',
+                   files: ['src/01_core.js', 'src/03_iso.js', 'src/04_people.js', 'src/13_portraits.js', 'tools/character_editor/editor.js'], nl: true,
+                   dirs: ['src', 'tools/character_editor'] })
 };
 
 // the page a target builds to, as a string
@@ -37,7 +41,7 @@ function buildAll(names) { for (const n of names) build(n); }
 function main() {
   const args = process.argv.slice(2), watch = args.includes('--watch');
   const names = args.filter(a => !a.startsWith('--'));
-  for (const n of names) if (!TARGETS[n]) { console.error('unknown target ' + n + ' (city, test, garden)'); process.exit(1); }
+  for (const n of names) if (!TARGETS[n]) { console.error('unknown target ' + n + ' (' + Object.keys(TARGETS).join(', ') + ')'); process.exit(1); }
   const chosen = names.length ? names : Object.keys(TARGETS);
   buildAll(chosen);
 

@@ -9,6 +9,7 @@ Each game is a single self-contained HTML file. They use plain JavaScript and Ca
 | [`hourglass_city.html`](hourglass_city.html) | **The Hourglass City**, an isometric point-and-click adventure (Act I, *The Ordinary Dead*) |
 | [`hourglass_testlevel.html`](hourglass_testlevel.html) | **The Black Sedan**, a real-time test level: take any car, chase the sedan, fight its crew at Pier 9 |
 | [`ravenshore_garden.html`](ravenshore_garden.html) | **Ravenshore Garden**, a cinematic pixel-art loop |
+| [`character_editor.html`](character_editor.html) | **Character editor**: make a character's doll and portrait, check its silhouette, copy the definition |
 
 ## Play
 
@@ -35,6 +36,10 @@ A 1950s detective adventure in the tradition of *Beneath a Steel Sky*. Frank's o
 The game saves at key moments, and you can also save from the Esc menu. *Continue* on the title screen resumes your game.
 
 **Editing rooms:** open `hourglass_city.html?edit=1&room=office` (or press F2 while playing). Edit mode draws each room's hidden geometry: walk areas, blocked areas, where Frank stands for each hotspot, the hotspot points and the lights. Drag any of them (positions snap to 0.05 m; hold Shift for 0.01 m), use the mouse wheel over a light to change its radius (Shift: its height), and press C to copy the changed definition lines to paste into the room's file. G shows the walk grid.
+
+## Characters
+
+Each person is one definition in `src/04_people.js` that draws both the walking doll and the dialogue portrait (`src/13_portraits.js`). Open `character_editor.html` to make one; [`docs/characters.md`](docs/characters.md) explains every option and how to give a character a silhouette and a face of their own.
 
 ## The Black Sedan (test level)
 
@@ -71,6 +76,7 @@ npm run build                 # all three
 node tools/build.js city      # src/ -> hourglass_city.html
 node tools/build.js test      # src/ (shared engine) + src_test/ -> hourglass_testlevel.html
 node tools/build.js garden    # src_garden/ -> ravenshore_garden.html
+node tools/build.js editor    # the engine's people + tools/character_editor/ -> character_editor.html
 npm run watch                 # rebuild on every save
 ```
 
