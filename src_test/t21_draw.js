@@ -146,7 +146,7 @@ function drawVehXray(V, cx, cy) {
   }
 }
 function drawPersonXray(a, cx, cy) {
-  const f = actorFrame(a), flip = (a.dir === 1 || a.dir === 3), sx0 = Math.round(isoX(a.x, a.y)) - cx - SPR_AX, sy0 = Math.round(isoY(a.x, a.y, 0)) - cy - SPR_BY, depth = a.x + a.y + 0.15;
+  const f = actorFrame(a), flip = (a.dir === 1 || a.dir === 3), sx0 = Math.round(isoX(a.x, a.y)) - cx - SPR_AX, sy0 = Math.round(isoY(a.x, a.y, 0)) - cy - SPR_BY, depth = a.x + a.y + ACTOR_DEPTH;
   for (let r = 0; r < SPR_H; r++) for (let i = 0; i < SPR_W; i++) {
     const c = f[r * SPR_W + (flip ? SPR_W - 1 - i : i)]; if (c === T) continue;
     const x = sx0 + i, y = sy0 + r; if (x < 0 || y < 0 || x >= W || y >= H || ((x + y) & 1)) continue;

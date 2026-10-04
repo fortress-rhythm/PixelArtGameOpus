@@ -1,0 +1,7 @@
+{
+  // The adventure's sources share one global scope (they are concatenated into one <script>), so the
+  // language service sees them as one program: go to definition, hover and find references work across files.
+  // Type checking is opt-in per file with // @ts-check on its first line (npm run typecheck).
+  "compilerOptions": { "target": "es2022", "lib": ["es2022", "dom"], "checkJs": false, "noEmit": true },
+  "include": ["*.js", "../types/game.d.ts"]
+}

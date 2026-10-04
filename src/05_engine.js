@@ -112,11 +112,13 @@ function findPath(gr, sx, sy, tx, ty) {
 }
 
 // =================================================================== ACTORS
+const WALK_SPEED = 1.55;    // metres per second, everyone
+const ACTOR_DEPTH = 0.15;   // a person sorts this far nearer than their foot point, so they stand in front of the floor they touch
 // dir: 0 SE (front), 1 SW (front, mirrored), 2 NE (back), 3 NW (back, mirrored)
 const DIRS = { SE: 0, SW: 1, NE: 2, NW: 3 };
 const actors = [];          // actors present in the current room
 function makeActor(id, cast) {
-  return { id, cast: CAST[cast || id], x: 0, y: 0, dir: 0, anim: 'idle', af: 0, path: [], speed: 1.55,
+  return { id, cast: CAST[cast || id], x: 0, y: 0, dir: 0, anim: 'idle', af: 0, path: [], speed: WALK_SPEED,
            dist: 0, talking: 0, visible: true, hot: 0, name: CAST_DEFS[cast || id].name, color: CAST_DEFS[cast || id].color,
            idleT: 0, pose: null, poseT: 0, onArrive: null, look: null, noShadow: false };
 }
@@ -232,7 +234,7 @@ function drawActor(a, cx, cy) {
   const f = actorFrame(a), flip = (a.dir === 1 || a.dir === 3);
   const sink = a.sink || 0, az = a.z || 0;                  // seated (sprite lowered into the floor) / standing on a stage
   const sx0 = Math.round(isoX(a.x, a.y)) - cx - SPR_AX, sy0 = Math.round(isoY(a.x, a.y, az)) - cy - SPR_BY + sink;
-  const depth = a.x + a.y + 0.15;
+  const depth = a.x + a.y + ACTOR_DEPTH;
   // contact shadow
   if (!a.noShadow && !sink) {
     const fx = sx0 + SPR_AX, fy = sy0 + SPR_BY;

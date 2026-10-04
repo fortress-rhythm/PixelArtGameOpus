@@ -1,0 +1,6 @@
+{
+  // The test level: the shared engine files from src/ plus everything here, one global scope (see src/jsconfig.json).
+  "compilerOptions": { "target": "es2022", "lib": ["es2022", "dom"], "checkJs": false, "noEmit": true },
+  "include": ["*.js", "../src/01_core.js", "../src/02_font.js", "../src/03_iso.js", "../src/04_people.js", "../src/05_engine.js",
+              "../src/08_audio.js", "../src/10_textures.js", "../src/11_fx.js", "../src/12_props.js", "../types/game.d.ts"]
+}

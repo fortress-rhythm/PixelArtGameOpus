@@ -78,16 +78,20 @@ The test level reuses the adventure's engine: the rasteriser, lighting, characte
 
 ## Tests
 
+The unit tests (`tests/unit/`) load the sources in Node and need nothing installed. 
 The headless browser tests use [puppeteer-core](https://pptr.dev/) with an installed Chrome. If Chrome is not at the default Windows path, set `CHROME_PATH` to it. On Linux as root (containers, CI) the runner adds `--no-sandbox` itself.
 
 ```sh
 npm install
 npm test              # everything
+npm run test:unit     # fast: the engine and story data in Node, no browser
 npm run test:city     # both story routes, keyboard play with save and load, room exits and entrances
 npm run test:level    # bot playthrough of the chase and fight, interactions, menus, the streetcar
 ```
 
 `node tools/tl.js tests/<file>.json` runs a single test of the test level, and `node tools/run.js tests/<file>.json` does the same for the adventure. Screenshots are written to `shots/`.
+
+How the code is written, and the rules for changing it: [`docs/code-style.md`](docs/code-style.md).
 
 ## Credits
 
