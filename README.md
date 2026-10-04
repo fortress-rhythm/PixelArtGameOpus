@@ -34,6 +34,8 @@ A 1950s detective adventure in the tradition of *Beneath a Steel Sky*. Frank's o
 
 The game saves at key moments, and you can also save from the Esc menu. *Continue* on the title screen resumes your game.
 
+**Editing rooms:** open `hourglass_city.html?edit=1&room=office` (or press F2 while playing). Edit mode draws each room's hidden geometry: walk areas, blocked areas, where Frank stands for each hotspot, the hotspot points and the lights. Drag any of them (positions snap to 0.05 m; hold Shift for 0.01 m), use the mouse wheel over a light to change its radius (Shift: its height), and press C to copy the changed definition lines to paste into the room's file. G shows the walk grid.
+
 ## The Black Sedan (test level)
 
 ![The Black Sedan title](docs/level_title.png)

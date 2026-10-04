@@ -31,7 +31,7 @@ something three files away without any warning.
 
 1. **Don't reformat old code.** No Prettier or ESLint `--fix` over existing files: it explodes the one-liners and
    ruins `git blame`. Format new files however reads best.
-2. **Two layers.** The engine (`01`–`12`) stays dense and fast. Content (rooms, story, cast, portraits)
+2. **Two layers.** The engine (`01`–`12`, `47_edit`) stays dense and fast. Content (rooms, story, cast, portraits)
    should read like data: one thing per line, named fields, comments on anything a writer would ask about.
 3. **Name the numbers that matter across files.** A constant used in more than one place, or one a designer will
    tune, gets a name and a comment where it is declared (`WALK_SPEED`, `ACTOR_DEPTH`, `DITHER_SPREAD`). A

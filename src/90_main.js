@@ -41,19 +41,22 @@ function toLogical(e) {
 }
 screen.addEventListener('mousemove', e => {
   const p = toLogical(e); UI.mx = p[0]; UI.my = p[1]; UI.mouseSeen = true; UI.kbMode = false;
+  editMouse('move', e);
 });
 screen.addEventListener('contextmenu', e => e.preventDefault());
 screen.addEventListener('mousedown', e => {
   e.preventDefault(); screen.focus(); audioInit();
   const p = toLogical(e); UI.mx = p[0]; UI.my = p[1]; UI.mouseSeen = true; UI.kbMode = false;
+  if (editMouse('down', e)) return;
   if (e.button === 2) rightClick(); else if (e.button === 0) leftClick();
 });
-screen.addEventListener('wheel', e => { if (UI.note) { const L = noteLayout(); UI.notePage = (UI.notePage + (e.deltaY > 0 ? 1 : L.pages - 1)) % L.pages; } }, { passive: true });
+window.addEventListener('mouseup', e => { editMouse('up', e); });
+screen.addEventListener('wheel', e => { if (editMouse('wheel', e)) return; if (UI.note) { const L = noteLayout(); UI.notePage = (UI.notePage + (e.deltaY > 0 ? 1 : L.pages - 1)) % L.pages; } }, { passive: true });
 window.addEventListener('keydown', e => {
   audioInit();
   const k = e.key.toLowerCase();
   if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' ', 'tab'].indexOf(k) >= 0) e.preventDefault();
-  if (!keys[k]) onKey(k, e);
+  if (!keys[k] && !editKey(k)) onKey(k, e);
   keys[k] = true;
 });
 window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
@@ -256,6 +259,7 @@ function render() {
   if (DEBUG) debugOverlay(cx, cy);
   if (room.post) room.post(cx, cy);
   grain();
+  editDraw();
   // hover detection uses the frame just drawn
   UI.hoverHs = null; UI.hoverItem = null; UI.hoverBtn = null;
   if (!overlayOpen() && G.mode === 'play' && UI.mouseSeen && !UI.kbMode) {
