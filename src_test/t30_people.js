@@ -31,7 +31,7 @@ function downOf(src) {
   const f = newFrame();
   for (let y = 0; y < SPR_BY; y++) for (let x = 0; x < SPR_W; x++) {
     const c = src[y * SPR_W + x]; if (c === T) continue;
-    const dx = Math.round(1 + y * (SPR_W - 3) / SPR_BY), dy = SPR_BY - 1 - Math.round((x - (SPR_AX - 7)) / 2.2);
+    const dx = Math.round(1 + (y - SPR_BY + 40) * (SPR_W - 3) / 40), dy = SPR_BY - 1 - Math.round((x - (SPR_AX - 7)) / 2.2);   // 40 rows of figure laid along the ground
     if (dx >= 0 && dx < SPR_W && dy >= 0 && dy < SPR_H) f[dy * SPR_W + dx] = c;
   }
   return f;
