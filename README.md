@@ -62,19 +62,23 @@ A looping evening scene in a garden above the Ravenshore skyline. A woman waters
 
 ## Building from source
 
-Each HTML file is built by concatenating its sources:
+Each HTML file is built by concatenating its sources. The build is plain Node, so it works the same on Windows, macOS and Linux:
 
 ```sh
-sh build.sh          # src/        -> hourglass_city.html
-sh build_test.sh     # src/ (shared engine) + src_test/ -> hourglass_testlevel.html
-sh build_garden.sh   # src_garden/ -> ravenshore_garden.html
+npm run build                 # all three
+node tools/build.js city      # src/ -> hourglass_city.html
+node tools/build.js test      # src/ (shared engine) + src_test/ -> hourglass_testlevel.html
+node tools/build.js garden    # src_garden/ -> ravenshore_garden.html
+npm run watch                 # rebuild on every save
 ```
+
+`build.sh`, `build_test.sh` and `build_garden.sh` still work; they call the same script.
 
 The test level reuses the adventure's engine: the rasteriser, lighting, characters, audio and effects in `src/01–12`. It adds its own city, voxel cars, driving physics, AI drivers, gunplay and goon AI in `src_test/`.
 
 ## Tests
 
-The headless browser tests use [puppeteer-core](https://pptr.dev/) with an installed Chrome. If Chrome is not at the default Windows path, set `CHROME_PATH` to it.
+The headless browser tests use [puppeteer-core](https://pptr.dev/) with an installed Chrome. If Chrome is not at the default Windows path, set `CHROME_PATH` to it. On Linux as root (containers, CI) the runner adds `--no-sandbox` itself.
 
 ```sh
 npm install
