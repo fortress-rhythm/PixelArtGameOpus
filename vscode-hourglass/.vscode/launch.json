@@ -1,0 +1,8 @@
+{
+  // F5 with vscode-hourglass/ open: a second window with the extension loaded and the repository open.
+  "version": "0.2.0",
+  "configurations": [
+    { "name": "Run extension", "type": "extensionHost", "request": "launch",
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}", "${workspaceFolder}/.."] }
+  ]
+}

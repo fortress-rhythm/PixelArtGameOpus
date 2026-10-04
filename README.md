@@ -107,6 +107,12 @@ that don't exist, flags that are read but never set, clues nobody can find, and 
 Warnings already accepted for Act I are kept in `tools/story_check.known.json` (`--accept` rewrites it), so only new
 problems show. In Claude Code, `.claude/hooks/after_edit.js` rebuilds the game and runs the check after every edit.
 
+### VS Code
+
+Open the repository folder. `Ctrl+Shift+B` builds; *Run Task* has the watch build, the story check (results go to the Problems panel), the tests, the type check and the cast sheets. The built pages are read-only in the editor so you change `src/` instead.
+
+`node vscode-hourglass/install.js` installs the repository's own extension (then restart VS Code): hover a string of pixel art to see it drawn, a palette name (`C.TAN`) to see the colour, or a cast id (`['say', 'russo', …]`) to see the doll and the portrait; story-check problems appear as you save. See [`vscode-hourglass/README.md`](vscode-hourglass/README.md).
+
 How the code is written, and the rules for changing it: [`docs/code-style.md`](docs/code-style.md).
 
 ## Credits

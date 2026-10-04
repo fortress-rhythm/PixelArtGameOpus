@@ -20,7 +20,11 @@ shots/
 *.suo
 .vs/
 .idea/
-.vscode/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/extensions.json
+!vscode-hourglass/.vscode/
 *.swp
 .DS_Store
 Thumbs.db

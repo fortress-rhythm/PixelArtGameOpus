@@ -1,0 +1,26 @@
+{
+  "name": "hourglass",
+  "displayName": "The Hourglass City",
+  "description": "Authoring help for the Hourglass City sources: pixel-art and colour previews on hover, cast previews, story-check problems.",
+  "version": "0.1.0",
+  "publisher": "fortress-rhythm",
+  "license": "MIT",
+  "private": true,
+  "engines": { "vscode": "^1.84.0" },
+  "categories": ["Visualization", "Linters"],
+  "main": "./src/extension.js",
+  "activationEvents": ["workspaceContains:src/01_core.js"],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Cast previews and the story check run the game's own code, so they need a trusted workspace. Pixel-art and colour previews work everywhere."
+    }
+  },
+  "contributes": {
+    "commands": [
+      { "command": "hourglass.check", "title": "Run story check", "category": "Hourglass" },
+      { "command": "hourglass.openEditor", "title": "Open character editor", "category": "Hourglass" }
+    ]
+  },
+  "scripts": { "test": "node --test \"test/*.test.js\"" }
+}

@@ -1,0 +1,17 @@
+{
+  // Ctrl+Shift+B builds; "Run Task" for the rest. The story check's results land in the Problems panel.
+  "version": "2.0.0",
+  "tasks": [
+    { "label": "Build", "type": "shell", "command": "node tools/build.js", "group": { "kind": "build", "isDefault": true }, "problemMatcher": [] },
+    { "label": "Watch (rebuild on save)", "type": "shell", "command": "node tools/build.js --watch", "isBackground": true,
+      "problemMatcher": { "owner": "hourglass-build", "pattern": { "regexp": "^unknown target (.*)$", "message": 1 },
+                          "background": { "activeBegins": true, "beginsPattern": "^built ", "endsPattern": "^watching " } } },
+    { "label": "Story check", "type": "shell", "command": "node tools/story_check.js",
+      "problemMatcher": { "owner": "hourglass-story", "fileLocation": ["relative", "${workspaceFolder}"],
+                          "pattern": { "regexp": "^(.*):(\\d+):(\\d+): (error|warning): (.*)$", "file": 1, "line": 2, "column": 3, "severity": 4, "message": 5 } } },
+    { "label": "Unit tests", "type": "shell", "command": "npm run test:unit", "group": "test", "problemMatcher": [] },
+    { "label": "All tests (needs Chrome)", "type": "shell", "command": "npm test", "group": { "kind": "test", "isDefault": true }, "problemMatcher": [] },
+    { "label": "Type check", "type": "shell", "command": "npm run typecheck", "problemMatcher": "$tsc" },
+    { "label": "Cast sheet and silhouettes", "type": "shell", "command": "node tools/sprite_sheet.js && node tools/sprite_sheet.js --silhouette && node tools/sprite_sheet.js --portraits", "problemMatcher": [] }
+  ]
+}

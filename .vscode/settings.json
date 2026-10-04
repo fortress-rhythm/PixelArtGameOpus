@@ -1,0 +1,8 @@
+{
+  // The built pages are generated from the sources: edit src/ instead (npm run watch rebuilds them).
+  "files.readonlyInclude": { "hourglass_city.html": true, "hourglass_testlevel.html": true, "ravenshore_garden.html": true, "character_editor.html": true },
+  "search.exclude": { "hourglass_city.html": true, "hourglass_testlevel.html": true, "ravenshore_garden.html": true, "character_editor.html": true, "shots": true },
+  // Don't reformat the dense engine code (docs/code-style.md, rule 1).
+  "[javascript]": { "editor.formatOnSave": false, "editor.rulers": [120, 200] },
+  "editor.wordWrap": "off"
+}

@@ -1,0 +1,4 @@
+{
+  // The repository's own extension is not on the marketplace: install it with  node vscode-hourglass/install.js
+  "recommendations": []
+}
