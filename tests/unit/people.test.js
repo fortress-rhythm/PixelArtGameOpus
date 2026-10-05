@@ -52,3 +52,18 @@ test('the tallest figure still has an empty top row', () => {
   const f = idle({ h: 36, neck: 2, hat: 'homburg' });
   for (let x = 0; x < g.SPR_W; x++) assert.strictEqual(f[x], g.T);
 });
+
+// hand-drawn heads: placed on the chin row and the body's centre, coloured by the costume and art.colours
+test('a hand-drawn head replaces the generated one, in the right place and colours', () => {
+  const key = g.costume({}), rows = ['.AAA.', 'ASSSA', 'SS0SS'];
+  const def = Object.assign({ key }, BASE, { art: { head: { front: rows }, colours: { 0: g.C.RED } } });
+  const f = g.buildPerson(def).front.idle[0], plain = idle({});
+  // the generated head's chin row (two skin pixels at cx-1, cx) sits at faceY + 4; the drawing's last row lands there
+  const faceY = g.SPR_BY - BASE.h + 1 + 1, chin = faceY + 4, cx = g.SPR_AX;
+  assert.strictEqual(f[chin * g.SPR_W + cx], g.C.RED);
+  assert.strictEqual(f[chin * g.SPR_W + cx - 2], key.S);
+  assert.strictEqual(f[(chin - 2) * g.SPR_W + cx - 1], key.A);
+  assert.notStrictEqual(hash(f), hash(plain));
+  // no back drawing: the back view keeps the generated head
+  assert.strictEqual(hash(g.buildPerson(def).back.idle[0]), hash(g.buildPerson(Object.assign({ key }, BASE)).back.idle[0]));
+});

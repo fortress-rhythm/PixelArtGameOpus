@@ -30,6 +30,7 @@ function faceOf(def) {
  * @param {boolean} open mouth open (talking)
  */
 function drawPortrait(def, expr, open) {
+  if (def.art && def.art.portrait) return drawPortraitArt(def, expr, open);
   const f = new Uint8Array(PORTRAIT_W * PORTRAIT_H).fill(T), K = def.key, F = faceOf(def), cx = 32;
   const sig = (/** @type {string} */ n) => !!def.sig && def.sig.indexOf(n) >= 0;
   /** @param {number} x @param {number} y @param {number|undefined} c */
@@ -148,15 +149,34 @@ function drawPortrait(def, expr, open) {
   else if (hat === 'beret') { for (let y = 7; y <= 17; y++) { const w = fw + 4 - Math.abs(y - 12) * 0.9; for (let x = -w; x <= w; x++) p(cx + x - 3, y, x > w * 0.5 ? K.h : K.H); } p(cx - 3, 6, K.h); p(cx - 3, 5, K.h); }
   else if (hat === 'cap' || hat === 'doorman') { crown(7, 19, fw, 15); if (hat === 'cap') { p(cx, 11, K.X); p(cx - 1, 12, K.X); p(cx + 1, 12, K.X); } else { p(cx, 11, K.b); } for (let y = 20; y <= 21; y++) for (let x = -fw + 2; x <= fw + 3; x++) p(cx + x, y, C.INK); shade(22, 23); }
   else if (hat === 'pillbox') { for (let y = 8; y <= 14; y++) for (let x = -7; x <= 7; x++) p(cx + x - 4, y, x > 3 ? K.h : K.H); }
-  // ---------------- outline
+  portraitOutline(f, K.o);
+  return f;
+}
+/**
+ * a hand-drawn portrait (def.art.portrait): the drawing for this expression, else neutral; the talking frame is
+ * <expr>_talk, else neutral_talk, else the still drawing. Placed bottom-centre; the outline is added, as for the
+ * generated ones. @param {any} def @param {string} expr @param {boolean} open
+ */
+function drawPortraitArt(def, expr, open) {
+  const P = def.art.portrait, key = artKey(def);
+  const rows = (open && (P[expr + '_talk'] || P.neutral_talk)) || P[expr] || P.neutral || P[Object.keys(P)[0]];
+  const f = new Uint8Array(PORTRAIT_W * PORTRAIT_H).fill(T), x0 = (PORTRAIT_W - rows[0].length) >> 1, y0 = PORTRAIT_H - rows.length;
+  for (let r = 0; r < rows.length; r++) for (let i = 0; i < rows[r].length; i++) {
+    const ch = rows[r][i], c = ch === '.' || ch === ' ' ? undefined : key[ch], x = x0 + i, y = y0 + r;
+    if (c !== undefined && x >= 0 && y >= 0 && x < PORTRAIT_W && y < PORTRAIT_H) f[y * PORTRAIT_W + x] = c;
+  }
+  portraitOutline(f, def.key.o);
+  return f;
+}
+/** @param {Uint8Array} f @param {number} oc */
+function portraitOutline(f, oc) {
   const src = f.slice();
   for (let y = 0; y < PORTRAIT_H; y++) for (let x = 0; x < PORTRAIT_W; x++) {
     if (src[y * PORTRAIT_W + x] !== T) continue;
     const n = (x > 0 && src[y * PORTRAIT_W + x - 1] !== T) || (x < PORTRAIT_W - 1 && src[y * PORTRAIT_W + x + 1] !== T) ||
               (y > 0 && src[(y - 1) * PORTRAIT_W + x] !== T) || (y < PORTRAIT_H - 1 && src[(y + 1) * PORTRAIT_W + x] !== T);
-    if (n) f[y * PORTRAIT_W + x] = K.o;
+    if (n) f[y * PORTRAIT_W + x] = oc;
   }
-  return f;
 }
 /** the portrait of a cast member, cached @param {string} id @param {string} expr @param {boolean} [open] */
 function portraitOf(id, expr, open) {

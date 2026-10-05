@@ -63,3 +63,12 @@ test('the importer reads a file, checks its size and uses the cast member\'s cos
   assert.throws(() => importArt(f, { for: 'frank' }), /at most 20x20/);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('a second drawing reuses the first one\'s extra letters', () => {
+  const pal = ['000000', 'd9443a', '5ad1d2'];
+  const red = new Uint8Array([217, 68, 58, 255]), cyan = new Uint8Array([90, 209, 210, 255, 217, 68, 58, 255]);
+  const first = artFromRGBA(1, 1, red, pal, {});
+  const second = artFromRGBA(2, 1, cyan, pal, {}, first.colours);
+  assert.deepStrictEqual(first.colours, { 0: 1 });
+  assert.deepStrictEqual(second.rows, ['10']); assert.deepStrictEqual(second.colours, { 0: 1, 1: 2 });
+});

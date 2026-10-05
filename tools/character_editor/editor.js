@@ -80,7 +80,16 @@ function sourceText() {
     line += piece;
   }
   lines.push(line);
-  return lines.join('\n');
+  return withArt(lines.join('\n'));
+}
+// hand-drawn parts go last, one row per line, so they diff well and can be read as pictures
+function withArt(text) {
+  const a = cur.art; if (!a || (!a.head && !a.portrait)) return text;
+  const ind = '           ', out = [];
+  if (a.head) out.push(ind + '  head: { ' + Object.keys(a.head).map(v => v + ': ' + artRowsSource(a.head[v], ind + '    ')).join(', ') + ' },');
+  if (a.portrait) out.push(ind + '  portrait: {\n' + Object.keys(a.portrait).map(e => ind + '    ' + e + ': ' + artRowsSource(a.portrait[e], ind + '    ')).join(',\n') + '\n' + ind + '  },');
+  if (a.colours && Object.keys(a.colours).length) out.push(ind + '  colours: ' + artColoursSource(a.colours, CNAME));
+  return text.replace(/ \},$/, ',') + '\n' + ind + 'art: {\n' + out.join('\n').replace(/,$/, '') + '\n' + ind + '} },';
 }
 
 // ------------------------------------------------------------------ controls
@@ -137,6 +146,18 @@ function buildSide() {
     const c = el('input', { type: 'checkbox', onchange: () => { cur.face[f] = c.checked; redraw(); } }); c.checked = !!F[f];
     return el('label', {}, [c, document.createTextNode(f)]);
   })));
+
+  side.appendChild(el('h2', { text: 'Hand-drawn parts' }));
+  side.appendChild(el('p', { class: 'note', text: 'PNGs drawn with the game palette (palettes/hourglass.gpl). A head replaces the generated one for that view (max 20×20, bottom row = chin); a portrait is 64×72 at most. Don\'t draw the outer outline: the game adds it.' }));
+  const pe = el('select', { id: 'artexpr', 'aria-label': 'Portrait expression' }, PORTRAIT_EXPRS.flatMap(e => [e, e + '_talk']).map(e => el('option', { value: e, text: e })));
+  side.appendChild(el('div', { class: 'btns' }, [
+    el('button', { type: 'button', text: 'Head, front…', onclick: () => pickArt(['head', 'front'], 20, 20) }),
+    el('button', { type: 'button', text: 'Head, back…', onclick: () => pickArt(['head', 'back'], 20, 20) })]));
+  side.appendChild(el('div', { class: 'row' }, [el('button', { type: 'button', text: 'Portrait…', onclick: () => pickArt(['portrait', pe.value], PORTRAIT_W, PORTRAIT_H) }), pe, el('span')]));
+  const parts = [];
+  if (cur.art) for (const kind of ['head', 'portrait']) for (const v in cur.art[kind] || {}) parts.push([kind, v]);
+  if (parts.length) side.appendChild(el('div', { class: 'btns' }, parts.map(([kind, v]) => el('button', { type: 'button', title: 'Remove', text: '✕ ' + kind + ' ' + v,
+    onclick: () => { delete cur.art[kind][v]; if (!Object.keys(cur.art[kind]).length) delete cur.art[kind]; if (!cur.art.head && !cur.art.portrait) delete cur.art; buildSide(); redraw(); } }))));
 
   side.appendChild(el('h2', { text: 'Colours (click a slot, then a colour)' }));
   const slots = el('div', { class: 'slots' });
@@ -255,6 +276,28 @@ function lightPix(c, x, y, off, row) {
   const z = (SPR_BY - row) / ZH, ph = frac(z / 0.2 + off * 0.25);
   const level = -1.2 + (ph < 0.5 ? 2.0 : 0) + (x < 48 ? 0.2 : 0);
   return quantLight(c, level, bay(x, y));
+}
+
+// ------------------------------------------------------------------ hand-drawn parts: a PNG into cur.art
+const artInput = el('input', { type: 'file', accept: 'image/png', hidden: '' }); document.body.appendChild(artInput);
+function pickArt(where, maxW, maxH) {
+  artInput.value = '';
+  artInput.onchange = async () => {
+    const file = artInput.files[0]; if (!file) return;
+    try {
+      const bmp = await createImageBitmap(file);
+      if (bmp.width > maxW || bmp.height > maxH) { toast(file.name + ' is ' + bmp.width + '×' + bmp.height + '; at most ' + maxW + '×' + maxH); return; }
+      const cv = document.createElement('canvas'); cv.width = bmp.width; cv.height = bmp.height;
+      const ctx = cv.getContext('2d'); ctx.drawImage(bmp, 0, 0);
+      cur.art = cur.art || {};
+      const res = artFromRGBA(bmp.width, bmp.height, ctx.getImageData(0, 0, bmp.width, bmp.height).data, PAL_HEX, cur.key, cur.art.colours);
+      (cur.art[where[0]] = cur.art[where[0]] || {})[where[1]] = res.rows;
+      if (Object.keys(res.colours).length) cur.art.colours = res.colours;
+      buildSide(); redraw();
+      toast(res.offPalette ? res.offPalette + ' pixel(s) were off the palette and snapped to the nearest colour' : 'Imported ' + where.join(' '));
+    } catch (e) { toast('Could not import: ' + e.message); }
+  };
+  artInput.click();
 }
 
 // ------------------------------------------------------------------ export, drafts, import

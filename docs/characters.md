@@ -82,6 +82,32 @@ colours it gets that slot's letter (`S` skin, `A` hair, `H` hat…), so the draw
 colours get letters of their own, listed as `colours`. Pixels that aren't palette colours are snapped to the
 nearest one and reported. The reader handles what pixel editors save (8-bit RGB/RGBA/grey and indexed PNGs).
 
+## Hand-drawn parts
+
+The parameters cover bodies well; the most distinctive part of a design is usually the head, and that is where a
+sketch matters most. A character can carry hand-drawn parts in `art`, and keep its generated body and animation:
+
+```js
+inspector: { h: 33, body: 'long', hat: 'homburg', ...,
+             art: { head: { front: ['..HHHHH..', ...], back: [...] },   // the whole head: face, hair and hat
+                    portrait: { neutral: [...], angry: [...], neutral_talk: [...] },
+                    colours: { '0': C.RED } } },                         // letters that aren't costume slots
+```
+
+- **Head:** replaces the generated head for that view; the other view stays generated if you only draw one.
+  The drawing's bottom row lands on the chin row and its middle column over the body's centre (an even width puts
+  the extra column on the side the figure faces). Keep `hat` set to `none` or not to match your drawing: it decides
+  where the shoulders start. At most 20×20.
+- **Portrait:** one 64×72 (or smaller, placed bottom-centre) drawing per expression; missing expressions use
+  `neutral`. A talking frame is `<expression>_talk`, else `neutral_talk`, else the still drawing.
+- **Don't draw the outer outline**: the game adds it, as it does for generated parts.
+- **Letters** come from the costume where the colour matches a slot, so a recoloured costume recolours the drawing.
+
+**From sketch to game:** trace your sketch at the target size in a pixel editor with `palettes/hourglass.gpl`
+loaded (don't shrink a scan automatically: every pixel at this size is a decision), save PNGs, then either use
+the editor's **Hand-drawn parts** buttons (they preview at once and go into the copied definition) or
+`node tools/import_art.js file.png --for <id>` and paste the rows yourself.
+
 ## Adding a new option
 
 Add it to `drawFigure` (doll) and, if it should show in the portrait, `drawPortrait`, with a default that draws

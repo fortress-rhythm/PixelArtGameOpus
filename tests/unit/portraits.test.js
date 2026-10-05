@@ -28,3 +28,16 @@ test('every hat and hair style draws', () => {
   for (const hair of ['short', 'slick', 'bob', 'bun', 'bald', 'long', 'curly', 'pomp']) seen.add(hash(g.drawPortrait(Object.assign({}, base, { hair }), 'neutral', false)));
   assert.strictEqual(seen.size, 10 + 8 - 1);   // 'none' with 'short' hair appears in both lists
 });
+
+test('a hand-drawn portrait is used per expression, with neutral and the still frame as fallbacks', () => {
+  const base = { h: 30, body: 'suit', hat: 'none', hair: 'short', key: g.costume({}) };
+  const a = ['SS', 'SS'], b = ['AA', 'AA'], t = ['00', '00'];
+  const def = Object.assign({}, base, { art: { portrait: { neutral: a, happy: b, neutral_talk: t }, colours: { 0: g.C.RED } } });
+  const at = (f) => f[(g.PORTRAIT_H - 1) * g.PORTRAIT_W + (g.PORTRAIT_W >> 1)];   // bottom-centre pixel
+  assert.strictEqual(at(g.drawPortrait(def, 'neutral', false)), base.key.S);
+  assert.strictEqual(at(g.drawPortrait(def, 'happy', false)), base.key.A);
+  assert.strictEqual(at(g.drawPortrait(def, 'angry', false)), base.key.S);          // no angry drawing: neutral
+  assert.strictEqual(at(g.drawPortrait(def, 'angry', true)), g.C.RED);              // talking: neutral_talk
+  const f = g.drawPortrait(def, 'neutral', false);
+  assert.strictEqual(f[(g.PORTRAIT_H - 3) * g.PORTRAIT_W + (g.PORTRAIT_W >> 1)], base.key.o);   // outline added above it
+});

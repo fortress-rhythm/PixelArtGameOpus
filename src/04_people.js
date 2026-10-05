@@ -59,9 +59,21 @@ function costume(o) {
 //   idle 'pockets'|'crossed'|'hips'|'smoke' (the standing pose)
 //   sig: signature features, drawn on the doll and on the portrait: 'glasses', 'moustache', 'beard', 'scarf',
 //        'flower', 'badge', 'satchel', 'cane', 'case'
+//   art: hand-drawn head and portrait (below, drawHeadArt)
 // pose: {dir: 0 front / 1 back, q: leg swing -1..1, lift: 0/1 which foot lifted, arm: swing -1..1,
 //        reach: 0..1, talk: 0/1, bob: 0/1, hold: item id, style: idle style}
 function hasSig(def, name) { return !!def.sig && def.sig.indexOf(name) >= 0; }
+// Hand-drawn parts (def.art, see docs/characters.md): rows of letters from a drawing (tools/import_art.js). Letters
+// are costume slots, or extra colours listed in def.art.colours.
+//   art.head.front / art.head.back   the whole head (face, hair, hat) for that view; replaces the generated head
+//   art.portrait.<expression>        a 64x72 portrait per expression (neutral is the fallback); <expr>_talk for talking
+function artKey(def) { return def.art && def.art.colours ? Object.assign({}, def.key, def.art.colours) : def.key; }
+// head art sits with its bottom row on the chin row and its middle column over the body's centre
+// (an even width puts the extra column on the side the figure faces)
+function drawHeadArt(rows, def, cx, chinY) {
+  const w = rows[0].length;
+  spmap(cx - ((w - 1) >> 1), chinY - rows.length + 1, rows, artKey(def));
+}
 function drawFigure(def, pose) {
   const K = def.key, back = pose.dir === 1, wd = def.wide ? 1 : 0;
   const top = SPR_BY - def.h + 1 + pose.bob;
@@ -173,7 +185,8 @@ function drawFigure(def, pose) {
   // ---------------- signature features on the body (behind the near arm)
   if (def.sig) drawBodySig(def, K, back, cx, sh, waist, wd);
   // ---------------- head
-  drawHead(def, K, back, cx, faceY - neck, pose);
+  const headArt = def.art && def.art.head && (back ? def.art.head.back : def.art.head.front);
+  if (headArt) drawHeadArt(headArt, def, cx, faceY - neck + 4); else drawHead(def, K, back, cx, faceY - neck, pose);
   // ---------------- near arm (in front)
   {
     const sx = cx - 4 - wd - so, reach = pose.reach || 0;

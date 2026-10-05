@@ -7,7 +7,7 @@
 // own from ART_EXTRA, listed in `colours`. Transparent pixels (alpha under 128) are '.'.
 
 // costume slot letters, in the order a colour shared by several slots should prefer
-const ART_SLOT_ORDER = 'oSsLAaemHhbYVCcKWNTtBkFGXP';
+const ART_SLOT_ORDER = 'oSsLAaHhbemYVCcKWNTtBkFGXP';
 // letters that are not costume slots, for colours the costume doesn't have
 const ART_EXTRA = '0123456789dfgijlnpqruvwxyzDEIJMOQRUZ';
 
@@ -15,13 +15,16 @@ const ART_EXTRA = '0123456789dfgijlnpqruvwxyzDEIJMOQRUZ';
  * @param {number} w @param {number} h @param {Uint8Array|Uint8ClampedArray} rgba
  * @param {string[]} palHex the game's palette ('rrggbb', in order)
  * @param {Object<string, number>} [key] a costume key: slot letter -> palette index
+ * @param {Object<string, number>} [known] extra letters already in use (from earlier drawings of the same character):
+ *        reused for the same colour, and new colours get new letters
  * @returns {{rows: string[], colours: Object<string, number>, offPalette: number, offExamples: string[]}}
  */
-function artFromRGBA(w, h, rgba, palHex, key) {
+function artFromRGBA(w, h, rgba, palHex, key, known) {
   const pal = palHex.map(x => [parseInt(x.slice(0, 2), 16), parseInt(x.slice(2, 4), 16), parseInt(x.slice(4, 6), 16)]);
   const slotOf = {};                                   // palette index -> costume slot letter
   if (key) for (const ch of ART_SLOT_ORDER) if (key[ch] !== undefined && slotOf[key[ch]] === undefined) slotOf[key[ch]] = ch;
-  const colours = {}, extraOf = {}, rows = [];
+  const colours = Object.assign({}, known || {}), extraOf = {}, rows = [];
+  for (const ch in colours) extraOf[colours[ch]] = ch;
   let next = 0, off = 0; const offEx = [];
   for (let y = 0; y < h; y++) {
     let row = '';
@@ -33,6 +36,7 @@ function artFromRGBA(w, h, rgba, palHex, key) {
       if (bd > 0) { off++; if (offEx.length < 5) offEx.push(x + ',' + y); }
       if (slotOf[best] !== undefined) { row += slotOf[best]; continue; }
       if (extraOf[best] === undefined) {
+        while (next < ART_EXTRA.length && colours[ART_EXTRA[next]] !== undefined) next++;
         if (next >= ART_EXTRA.length) throw new Error('more than ' + ART_EXTRA.length + ' colours that are not in the costume');
         extraOf[best] = ART_EXTRA[next++]; colours[extraOf[best]] = best;
       }

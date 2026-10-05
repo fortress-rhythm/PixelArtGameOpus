@@ -19,8 +19,8 @@ const TARGETS = {
   garden: () => ({ out: 'ravenshore_garden.html', head: 'src_garden/00_head.html', files: jsIn('src_garden'), nl: false, dirs: ['src_garden'] }),
   // the character editor draws with the game's own code
   editor: () => ({ out: 'character_editor.html', head: 'tools/character_editor/head.html',
-                   files: ['src/01_core.js', 'src/03_iso.js', 'src/04_people.js', 'src/13_portraits.js', 'tools/character_editor/editor.js'], nl: true,
-                   dirs: ['src', 'tools/character_editor'] })
+                   files: ['src/01_core.js', 'src/03_iso.js', 'src/04_people.js', 'src/13_portraits.js', 'tools/art_core.js', 'tools/character_editor/editor.js'], nl: true,
+                   dirs: ['src', 'tools', 'tools/character_editor'] })
 };
 
 // the page a target builds to, as a string

@@ -578,9 +578,21 @@ function costume(o) {
 //   idle 'pockets'|'crossed'|'hips'|'smoke' (the standing pose)
 //   sig: signature features, drawn on the doll and on the portrait: 'glasses', 'moustache', 'beard', 'scarf',
 //        'flower', 'badge', 'satchel', 'cane', 'case'
+//   art: hand-drawn head and portrait (below, drawHeadArt)
 // pose: {dir: 0 front / 1 back, q: leg swing -1..1, lift: 0/1 which foot lifted, arm: swing -1..1,
 //        reach: 0..1, talk: 0/1, bob: 0/1, hold: item id, style: idle style}
 function hasSig(def, name) { return !!def.sig && def.sig.indexOf(name) >= 0; }
+// Hand-drawn parts (def.art, see docs/characters.md): rows of letters from a drawing (tools/import_art.js). Letters
+// are costume slots, or extra colours listed in def.art.colours.
+//   art.head.front / art.head.back   the whole head (face, hair, hat) for that view; replaces the generated head
+//   art.portrait.<expression>        a 64x72 portrait per expression (neutral is the fallback); <expr>_talk for talking
+function artKey(def) { return def.art && def.art.colours ? Object.assign({}, def.key, def.art.colours) : def.key; }
+// head art sits with its bottom row on the chin row and its middle column over the body's centre
+// (an even width puts the extra column on the side the figure faces)
+function drawHeadArt(rows, def, cx, chinY) {
+  const w = rows[0].length;
+  spmap(cx - ((w - 1) >> 1), chinY - rows.length + 1, rows, artKey(def));
+}
 function drawFigure(def, pose) {
   const K = def.key, back = pose.dir === 1, wd = def.wide ? 1 : 0;
   const top = SPR_BY - def.h + 1 + pose.bob;
@@ -692,7 +704,8 @@ function drawFigure(def, pose) {
   // ---------------- signature features on the body (behind the near arm)
   if (def.sig) drawBodySig(def, K, back, cx, sh, waist, wd);
   // ---------------- head
-  drawHead(def, K, back, cx, faceY - neck, pose);
+  const headArt = def.art && def.art.head && (back ? def.art.head.back : def.art.head.front);
+  if (headArt) drawHeadArt(headArt, def, cx, faceY - neck + 4); else drawHead(def, K, back, cx, faceY - neck, pose);
   // ---------------- near arm (in front)
   {
     const sx = cx - 4 - wd - so, reach = pose.reach || 0;
@@ -935,6 +948,7 @@ function faceOf(def) {
  * @param {boolean} open mouth open (talking)
  */
 function drawPortrait(def, expr, open) {
+  if (def.art && def.art.portrait) return drawPortraitArt(def, expr, open);
   const f = new Uint8Array(PORTRAIT_W * PORTRAIT_H).fill(T), K = def.key, F = faceOf(def), cx = 32;
   const sig = (/** @type {string} */ n) => !!def.sig && def.sig.indexOf(n) >= 0;
   /** @param {number} x @param {number} y @param {number|undefined} c */
@@ -1053,21 +1067,96 @@ function drawPortrait(def, expr, open) {
   else if (hat === 'beret') { for (let y = 7; y <= 17; y++) { const w = fw + 4 - Math.abs(y - 12) * 0.9; for (let x = -w; x <= w; x++) p(cx + x - 3, y, x > w * 0.5 ? K.h : K.H); } p(cx - 3, 6, K.h); p(cx - 3, 5, K.h); }
   else if (hat === 'cap' || hat === 'doorman') { crown(7, 19, fw, 15); if (hat === 'cap') { p(cx, 11, K.X); p(cx - 1, 12, K.X); p(cx + 1, 12, K.X); } else { p(cx, 11, K.b); } for (let y = 20; y <= 21; y++) for (let x = -fw + 2; x <= fw + 3; x++) p(cx + x, y, C.INK); shade(22, 23); }
   else if (hat === 'pillbox') { for (let y = 8; y <= 14; y++) for (let x = -7; x <= 7; x++) p(cx + x - 4, y, x > 3 ? K.h : K.H); }
-  // ---------------- outline
+  portraitOutline(f, K.o);
+  return f;
+}
+/**
+ * a hand-drawn portrait (def.art.portrait): the drawing for this expression, else neutral; the talking frame is
+ * <expr>_talk, else neutral_talk, else the still drawing. Placed bottom-centre; the outline is added, as for the
+ * generated ones. @param {any} def @param {string} expr @param {boolean} open
+ */
+function drawPortraitArt(def, expr, open) {
+  const P = def.art.portrait, key = artKey(def);
+  const rows = (open && (P[expr + '_talk'] || P.neutral_talk)) || P[expr] || P.neutral || P[Object.keys(P)[0]];
+  const f = new Uint8Array(PORTRAIT_W * PORTRAIT_H).fill(T), x0 = (PORTRAIT_W - rows[0].length) >> 1, y0 = PORTRAIT_H - rows.length;
+  for (let r = 0; r < rows.length; r++) for (let i = 0; i < rows[r].length; i++) {
+    const ch = rows[r][i], c = ch === '.' || ch === ' ' ? undefined : key[ch], x = x0 + i, y = y0 + r;
+    if (c !== undefined && x >= 0 && y >= 0 && x < PORTRAIT_W && y < PORTRAIT_H) f[y * PORTRAIT_W + x] = c;
+  }
+  portraitOutline(f, def.key.o);
+  return f;
+}
+/** @param {Uint8Array} f @param {number} oc */
+function portraitOutline(f, oc) {
   const src = f.slice();
   for (let y = 0; y < PORTRAIT_H; y++) for (let x = 0; x < PORTRAIT_W; x++) {
     if (src[y * PORTRAIT_W + x] !== T) continue;
     const n = (x > 0 && src[y * PORTRAIT_W + x - 1] !== T) || (x < PORTRAIT_W - 1 && src[y * PORTRAIT_W + x + 1] !== T) ||
               (y > 0 && src[(y - 1) * PORTRAIT_W + x] !== T) || (y < PORTRAIT_H - 1 && src[(y + 1) * PORTRAIT_W + x] !== T);
-    if (n) f[y * PORTRAIT_W + x] = K.o;
+    if (n) f[y * PORTRAIT_W + x] = oc;
   }
-  return f;
 }
 /** the portrait of a cast member, cached @param {string} id @param {string} expr @param {boolean} [open] */
 function portraitOf(id, expr, open) {
   const k = id + '|' + expr + '|' + (open ? 1 : 0);
   return PORTRAITS[k] || (PORTRAITS[k] = drawPortrait(CAST_DEFS[id], expr, !!open));
 }
+
+// Turns a picture (RGBA pixels) into the game's string-map format: rows of letters plus the colours they stand for.
+// Shared by the command-line importer (tools/import_art.js) and the character editor (built into its page), so both
+// make exactly the same text. Plain functions, no dependencies: the palette is passed in.
+//
+// Letters: when a character's costume key is given, a pixel whose colour is one of that costume's slots gets the slot
+// letter (S skin, C coat, A hair...), so the drawing recolours with the costume. Any other colour gets a letter of its
+// own from ART_EXTRA, listed in `colours`. Transparent pixels (alpha under 128) are '.'.
+
+// costume slot letters, in the order a colour shared by several slots should prefer
+const ART_SLOT_ORDER = 'oSsLAaHhbemYVCcKWNTtBkFGXP';
+// letters that are not costume slots, for colours the costume doesn't have
+const ART_EXTRA = '0123456789dfgijlnpqruvwxyzDEIJMOQRUZ';
+
+/**
+ * @param {number} w @param {number} h @param {Uint8Array|Uint8ClampedArray} rgba
+ * @param {string[]} palHex the game's palette ('rrggbb', in order)
+ * @param {Object<string, number>} [key] a costume key: slot letter -> palette index
+ * @param {Object<string, number>} [known] extra letters already in use (from earlier drawings of the same character):
+ *        reused for the same colour, and new colours get new letters
+ * @returns {{rows: string[], colours: Object<string, number>, offPalette: number, offExamples: string[]}}
+ */
+function artFromRGBA(w, h, rgba, palHex, key, known) {
+  const pal = palHex.map(x => [parseInt(x.slice(0, 2), 16), parseInt(x.slice(2, 4), 16), parseInt(x.slice(4, 6), 16)]);
+  const slotOf = {};                                   // palette index -> costume slot letter
+  if (key) for (const ch of ART_SLOT_ORDER) if (key[ch] !== undefined && slotOf[key[ch]] === undefined) slotOf[key[ch]] = ch;
+  const colours = Object.assign({}, known || {}), extraOf = {}, rows = [];
+  for (const ch in colours) extraOf[colours[ch]] = ch;
+  let next = 0, off = 0; const offEx = [];
+  for (let y = 0; y < h; y++) {
+    let row = '';
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      if (rgba[i + 3] < 128) { row += '.'; continue; }
+      let best = 0, bd = 1e9;
+      for (let k = 0; k < pal.length; k++) { const p = pal[k], d = (p[0] - rgba[i]) ** 2 + (p[1] - rgba[i + 1]) ** 2 + (p[2] - rgba[i + 2]) ** 2; if (d < bd) { bd = d; best = k; } }
+      if (bd > 0) { off++; if (offEx.length < 5) offEx.push(x + ',' + y); }
+      if (slotOf[best] !== undefined) { row += slotOf[best]; continue; }
+      if (extraOf[best] === undefined) {
+        while (next < ART_EXTRA.length && colours[ART_EXTRA[next]] !== undefined) next++;
+        if (next >= ART_EXTRA.length) throw new Error('more than ' + ART_EXTRA.length + ' colours that are not in the costume');
+        extraOf[best] = ART_EXTRA[next++]; colours[extraOf[best]] = best;
+      }
+      row += extraOf[best];
+    }
+    rows.push(row);
+  }
+  return { rows, colours, offPalette: off, offExamples: offEx };
+}
+// the same as source text: "['..ab..', ...]" with one row per line, indented
+/** @param {string[]} rows @param {string} indent */
+function artRowsSource(rows, indent) { return '[\n' + rows.map(r => indent + "  '" + r + "'").join(',\n') + '\n' + indent + ']'; }
+/** @param {Object<string, number>} colours @param {string[]} cname palette index -> C name */
+function artColoursSource(colours, cname) { return '{ ' + Object.keys(colours).map(k => (/^\d/.test(k) ? "'" + k + "'" : k) + ': C.' + cname[colours[k]]).join(', ') + ' }'; }
+
+if (typeof module !== 'undefined' && module.exports) module.exports = { artFromRGBA, artRowsSource, artColoursSource, ART_SLOT_ORDER, ART_EXTRA };
 
 // =================================================================== CHARACTER EDITOR
 // Edits one CAST_DEFS entry and shows what the game will draw from it: the doll in four directions, walking and
@@ -1151,7 +1240,16 @@ function sourceText() {
     line += piece;
   }
   lines.push(line);
-  return lines.join('\n');
+  return withArt(lines.join('\n'));
+}
+// hand-drawn parts go last, one row per line, so they diff well and can be read as pictures
+function withArt(text) {
+  const a = cur.art; if (!a || (!a.head && !a.portrait)) return text;
+  const ind = '           ', out = [];
+  if (a.head) out.push(ind + '  head: { ' + Object.keys(a.head).map(v => v + ': ' + artRowsSource(a.head[v], ind + '    ')).join(', ') + ' },');
+  if (a.portrait) out.push(ind + '  portrait: {\n' + Object.keys(a.portrait).map(e => ind + '    ' + e + ': ' + artRowsSource(a.portrait[e], ind + '    ')).join(',\n') + '\n' + ind + '  },');
+  if (a.colours && Object.keys(a.colours).length) out.push(ind + '  colours: ' + artColoursSource(a.colours, CNAME));
+  return text.replace(/ \},$/, ',') + '\n' + ind + 'art: {\n' + out.join('\n').replace(/,$/, '') + '\n' + ind + '} },';
 }
 
 // ------------------------------------------------------------------ controls
@@ -1208,6 +1306,18 @@ function buildSide() {
     const c = el('input', { type: 'checkbox', onchange: () => { cur.face[f] = c.checked; redraw(); } }); c.checked = !!F[f];
     return el('label', {}, [c, document.createTextNode(f)]);
   })));
+
+  side.appendChild(el('h2', { text: 'Hand-drawn parts' }));
+  side.appendChild(el('p', { class: 'note', text: 'PNGs drawn with the game palette (palettes/hourglass.gpl). A head replaces the generated one for that view (max 20×20, bottom row = chin); a portrait is 64×72 at most. Don\'t draw the outer outline: the game adds it.' }));
+  const pe = el('select', { id: 'artexpr', 'aria-label': 'Portrait expression' }, PORTRAIT_EXPRS.flatMap(e => [e, e + '_talk']).map(e => el('option', { value: e, text: e })));
+  side.appendChild(el('div', { class: 'btns' }, [
+    el('button', { type: 'button', text: 'Head, front…', onclick: () => pickArt(['head', 'front'], 20, 20) }),
+    el('button', { type: 'button', text: 'Head, back…', onclick: () => pickArt(['head', 'back'], 20, 20) })]));
+  side.appendChild(el('div', { class: 'row' }, [el('button', { type: 'button', text: 'Portrait…', onclick: () => pickArt(['portrait', pe.value], PORTRAIT_W, PORTRAIT_H) }), pe, el('span')]));
+  const parts = [];
+  if (cur.art) for (const kind of ['head', 'portrait']) for (const v in cur.art[kind] || {}) parts.push([kind, v]);
+  if (parts.length) side.appendChild(el('div', { class: 'btns' }, parts.map(([kind, v]) => el('button', { type: 'button', title: 'Remove', text: '✕ ' + kind + ' ' + v,
+    onclick: () => { delete cur.art[kind][v]; if (!Object.keys(cur.art[kind]).length) delete cur.art[kind]; if (!cur.art.head && !cur.art.portrait) delete cur.art; buildSide(); redraw(); } }))));
 
   side.appendChild(el('h2', { text: 'Colours (click a slot, then a colour)' }));
   const slots = el('div', { class: 'slots' });
@@ -1326,6 +1436,28 @@ function lightPix(c, x, y, off, row) {
   const z = (SPR_BY - row) / ZH, ph = frac(z / 0.2 + off * 0.25);
   const level = -1.2 + (ph < 0.5 ? 2.0 : 0) + (x < 48 ? 0.2 : 0);
   return quantLight(c, level, bay(x, y));
+}
+
+// ------------------------------------------------------------------ hand-drawn parts: a PNG into cur.art
+const artInput = el('input', { type: 'file', accept: 'image/png', hidden: '' }); document.body.appendChild(artInput);
+function pickArt(where, maxW, maxH) {
+  artInput.value = '';
+  artInput.onchange = async () => {
+    const file = artInput.files[0]; if (!file) return;
+    try {
+      const bmp = await createImageBitmap(file);
+      if (bmp.width > maxW || bmp.height > maxH) { toast(file.name + ' is ' + bmp.width + '×' + bmp.height + '; at most ' + maxW + '×' + maxH); return; }
+      const cv = document.createElement('canvas'); cv.width = bmp.width; cv.height = bmp.height;
+      const ctx = cv.getContext('2d'); ctx.drawImage(bmp, 0, 0);
+      cur.art = cur.art || {};
+      const res = artFromRGBA(bmp.width, bmp.height, ctx.getImageData(0, 0, bmp.width, bmp.height).data, PAL_HEX, cur.key, cur.art.colours);
+      (cur.art[where[0]] = cur.art[where[0]] || {})[where[1]] = res.rows;
+      if (Object.keys(res.colours).length) cur.art.colours = res.colours;
+      buildSide(); redraw();
+      toast(res.offPalette ? res.offPalette + ' pixel(s) were off the palette and snapped to the nearest colour' : 'Imported ' + where.join(' '));
+    } catch (e) { toast('Could not import: ' + e.message); }
+  };
+  artInput.click();
 }
 
 // ------------------------------------------------------------------ export, drafts, import
