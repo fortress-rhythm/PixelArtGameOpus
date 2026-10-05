@@ -11,7 +11,10 @@ Read `docs/characters.md` first: it lists every option, colour slot and the rule
 ## Steps
 
 1. **Pin who they are** in a sentence: job, age, build, one thing people remember about them. That sentence picks
-   the options; don't pick options first.
+   the options; don't pick options first. Start the design log: copy `docs/design-log/TEMPLATE.md` to
+   `docs/design-log/<id>.md` and fill in who they are.
+   **Start from blank or an editor example, never from an Act I cast entry** (© Odiriuss). If the user describes a
+   character that matches an existing one from Act I or from another work, say so and suggest how to make it theirs.
 2. **Silhouette first.** Choose height (`h`), `body`, `hat` and the standing pose (`idle`), then shoulders, neck,
    belly, stance, lean, coat flare. Aim for an outline no current cast member has: run
    `node tools/sprite_sheet.js --silhouette` and compare; if two black shapes look alike, change height, hat or
@@ -25,9 +28,13 @@ Read `docs/characters.md` first: it lists every option, colour slot and the rule
    palette: saturated colour is rare and means something.
 6. **Write the entry** in `CAST_DEFS` (`src/04_people.js`) in the house format, one entry per character. The user
    can also make it in `character_editor.html` and paste the copied line; offer that for anything visual.
-7. **Check.** `npm run test:unit` (the golden test must still pass: existing characters unchanged), render the
+7. **Hand-drawn parts:** if the user has sketches, the head and portrait can be drawn in a pixel editor with
+   `palettes/hourglass.gpl` and imported (`node tools/import_art.js file.png --for <id>`, or the editor's
+   *Hand-drawn parts* buttons). See "Hand-drawn parts" in `docs/characters.md`.
+8. **Check.** `npm run test:unit` (the golden test must still pass: existing characters unchanged), render the
    sheets above and look at them, then `npm run build`. Show the user the silhouette lineup and the portraits.
-8. To put them in a room: an actor (`ACT[id]`), `['place', id, x, y, dir]` in a script, and a hotspot with
+9. **Log it:** add the silhouette check and the date to the design log.
+10. To put them in a room: an actor (`ACT[id]`), `['place', id, x, y, dir]` in a script, and a hotspot with
    `actor: id` and `talk`.
 
 ## Don't

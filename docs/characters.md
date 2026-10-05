@@ -8,6 +8,14 @@ Open **`character_editor.html`** to make one. It draws with the game's own code,
 directions, walking, talking and under slatted light, the portrait in every expression, and the new character's
 silhouette against the whole cast. **Copy definition** gives the line to paste into `CAST_DEFS`.
 
+## Your own characters
+
+The Act I cast's designs, names and stories are © Odiriuss (the code is MIT). For a new story, start every
+character from blank or from one of the editor's examples, never by editing an Act I entry, and keep a design log
+from [`design-log/TEMPLATE.md`](design-log/TEMPLATE.md): dated sketches, real-world references, the checks you ran.
+Genre types (a detective in a trench coat, a nightclub singer) are free to use; what makes a character yours is the
+particular combination of look, name, voice and role.
+
 ## Identity in two sizes
 
 At 30 pixels tall a face is five pixels wide, so the doll is recognised by its **outline**; the portrait carries

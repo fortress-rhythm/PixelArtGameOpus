@@ -1273,11 +1273,15 @@ function buildSide() {
   const side = document.getElementById('side'); side.textContent = '';
   side.appendChild(el('h1', { text: 'Character editor' }));
   // start from
-  const starts = [''].concat(Object.keys(CAST_DEFS).map(k => 'cast:' + k), Object.keys(EXAMPLES).map(k => 'example:' + k), Object.keys(drafts()).map(k => 'draft:' + k));
-  side.appendChild(selectRow('start from', 'start', starts, '', v => {
+  // Act I's cast is listed last and marked: its designs are © Odiriuss, so they are for study and comparison only
+  const starts = [''].concat(Object.keys(EXAMPLES).map(k => 'example:' + k), Object.keys(drafts()).map(k => 'draft:' + k), Object.keys(CAST_DEFS).map(k => 'cast:' + k));
+  const sel = selectRow('start from', 'start', starts, '', v => {
     if (!v) return; const [kind, id] = v.split(':');
     load(id, kind === 'cast' ? CAST_DEFS[id] : kind === 'example' ? EXAMPLES[id] : drafts()[id]);
-  }));
+    if (kind === 'cast') toast('Act I cast: © Odiriuss. Study it, but start your own characters from an example.');
+  });
+  for (const o of sel.querySelectorAll('option')) if (o.value.startsWith('cast:')) o.textContent = o.value + ' (Act I, © Odiriuss: reference only)';
+  side.appendChild(sel);
   const idIn = el('input', { type: 'text', id: 'cid', value: curId, oninput: () => { curId = idIn.value.replace(/\W/g, '') || 'newcharacter'; redraw(); } });
   side.appendChild(el('div', { class: 'row' }, [el('label', { for: 'cid', text: 'id' }), idIn, el('span')]));
   const nm = el('input', { type: 'text', id: 'cname', value: cur.name || '', oninput: () => { cur.name = nm.value; redraw(); } });

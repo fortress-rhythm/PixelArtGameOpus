@@ -60,6 +60,9 @@ The user is on Windows. Give `npm`/`node` commands; nothing the user runs may ne
   silence them unless asked, and don't `--accept` new warnings without saying so.
 - **Rebuild before committing.** The built `.html` files are committed and `tests/unit/build.test.js` fails when
   they are stale. Never edit a built `.html` directly.
+- **New characters are original.** Start every new character from blank or from the editor's examples, never by
+  editing an Act I cast entry (those designs are © Odiriuss). Keep a design log from `docs/design-log/TEMPLATE.md`.
+  Never generate a character to resemble an existing game, comic or film character, and say so if asked to.
 - **Don't change how existing characters look by accident.** `tests/unit/people.golden.json` pins every frame of
   every cast member and the test level's combat frames. A new option must draw nothing different when it is left
   out. Accept intentional changes with `UPDATE_GOLDEN=1 npm run test:unit` and say so in the commit.
