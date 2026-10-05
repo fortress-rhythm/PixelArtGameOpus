@@ -68,6 +68,20 @@ buckle, `F` shoes, `H h b` hat and band, `S s L` skin, `A a` hair, `e` eyes, `m`
   character that doesn't use them. To change an existing character on purpose, accept the new frames with
   `UPDATE_GOLDEN=1 npm run test:unit`.
 
+## Importing a drawing
+
+Draw in any pixel editor with the palette from `palettes/`, save a PNG, then:
+
+```sh
+node tools/import_art.js head-front.png --for inspector      # letters from that character's costume
+node tools/import_art.js sign.png                           # any stamp: each colour gets its own letter
+```
+
+It prints the drawing as rows of letters, ready to paste. Where a pixel's colour is one of the character's costume
+colours it gets that slot's letter (`S` skin, `A` hair, `H` hat…), so the drawing recolours with the costume. Other
+colours get letters of their own, listed as `colours`. Pixels that aren't palette colours are snapped to the
+nearest one and reported. The reader handles what pixel editors save (8-bit RGB/RGBA/grey and indexed PNGs).
+
 ## Adding a new option
 
 Add it to `drawFigure` (doll) and, if it should show in the portrait, `drawPortrait`, with a default that draws
