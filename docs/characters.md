@@ -57,6 +57,11 @@ buckle, `F` shoes, `H h b` hat and band, `S s L` skin, `A a` hair, `e` eyes, `m`
 
 ## Tools
 
+- `palettes/`: the game's 60 colours for your pixel editor, in the game's order and named after `C.*`:
+  `hourglass.gpl` (Aseprite, Pixelorama, Piskel, Krita, GIMP), `hourglass.pal` (JASC), `hourglass.hex`, and
+  `hourglass.png` (one pixel per colour, for "load palette from image"). Regenerate with `npm run palette` if
+  `PAL_HEX` ever changes; a unit test fails while they are stale.
+
 - `character_editor.html`: build with `npm run build` (or `node tools/build.js editor`), open in a browser.
 - `node tools/sprite_sheet.js [ids] [--silhouette | --walk | --portraits]` writes a PNG to `shots/`.
 - The unit tests pin every existing frame (`tests/unit/people.golden.json`): adding options never changes a
