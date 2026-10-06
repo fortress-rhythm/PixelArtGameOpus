@@ -22,7 +22,7 @@ npm install                       # once (puppeteer-core, typescript)
 npm run build                     # all pages; node tools/build.js city|test|garden|editor for one
 npm run watch                     # rebuild on save
 npm run check                     # story check: file:line problems in the adventure's story and rooms
-npm run test:unit                 # fast, Node only: engine, story check, edit mode, people, portraits, extension
+npm run test:unit                 # Node only: engine, story check, edit mode, people, portraits, extension, garden loop
 npm test                          # everything, including the browser playthroughs (needs Chrome; CHROME_PATH)
 npm run typecheck                 # files that start with // @ts-check
 node tools/sprite_sheet.js [ids] [--silhouette|--walk|--portraits]   # cast to shots/*.png
@@ -74,6 +74,8 @@ The user is on Windows. Give `npm`/`node` commands; nothing the user runs may ne
   about five minutes.
 - **Room geometry:** use edit mode (`hourglass_city.html?edit=1&room=<id>`, or F2) to place things and copy the
   lines, rather than guessing coordinates. Exits must land on walkable ground (the story check enforces it).
+- **The garden loop must stay seamless** (`tests/unit/garden.test.js`): anything that repeats runs a whole number
+  of cycles per loop (`osc(k, …)` or `N * t / LOOP_S` with whole k, N), and anything with state resets in `loopReset`.
 - **Git:** small commits that each do one thing; fast-forward merges only.
 
 ## Skills

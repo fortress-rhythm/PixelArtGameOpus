@@ -5,6 +5,7 @@
 //   const g = loadGame({ files: [...] }); only these sources, in this order
 //   const g = loadGame({ override: { 'src/20_story.js': text } });   a source replaced by other text (checker tests)
 // Every top-level name the sources declare is reachable as g.NAME (looked up lazily in the shared scope).
+//   loadGame({ files: GARDEN_FILES, search: '?t=12' })   Ravenshore Garden (its init() runs, seeking to t)
 const fs = require('fs'), path = require('path'), vm = require('vm');
 const ROOT = path.join(__dirname, '..');
 
@@ -42,8 +43,9 @@ function loadGame(opts) {
   }
   const ctx = vm.createContext(sandbox(opts.search));
   // a getter per top-level binding, so const/let/class/function are all reachable from outside
-  code += '\n;globalThis.__get = (n) => eval(n);';
+  code += '\n;globalThis.__get = (n) => eval(n); globalThis.__eval = (s) => eval(s);';
   vm.runInContext(code, ctx, { filename: 'game.js' });
-  return new Proxy({}, { get: (t, k) => typeof k === 'string' ? ctx.__get(k) : undefined });
+  // g.$eval('simFrame = 0') runs code in the sources' scope (to set a top-level let)
+  return new Proxy({}, { get: (t, k) => k === '$eval' ? ctx.__eval : typeof k === 'string' ? ctx.__get(k) : undefined });
 }
 module.exports = { loadGame, ROOT };

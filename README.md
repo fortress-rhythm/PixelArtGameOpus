@@ -92,7 +92,7 @@ The headless browser tests use [puppeteer-core](https://pptr.dev/) with an insta
 ```sh
 npm install
 npm test              # everything
-npm run test:unit     # fast: the engine and story data in Node, no browser
+npm run test:unit     # Node only, no browser: engine, story, people, tools, and the garden loop's seam
 npm run test:city     # both story routes, keyboard play with save and load, room exits and entrances
 npm run test:level    # bot playthrough of the chase and fight, interactions, menus, the streetcar
 ```
