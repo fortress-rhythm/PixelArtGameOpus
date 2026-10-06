@@ -35,6 +35,8 @@ paste its "For the brief" text over the **Layout** section below.
 - **Distance:** a broad volcanic mountain, Fuji-like but less distinctive (an off-centre shoulder, light snow).
   Nearer, green valley hills with a few cliffs of violet-to-plum earth. The horizon slopes gently across the wide
   world; tall verticals (lighthouse, trees, lamp posts) carry the height.
+- **Fireflies:** a few, low over the bridge near the left end and the trees: faint phosphor-green specks, a
+  handful at a time, never a swarm.
 - **Town, to the right:** a few simple shops; the inn is marked by a lamp at its door.
 - **The lighthouse:** narrow, standing behind the top of the bridge. From the top of the deck a short, foreshortened
   staircase climbs to its door. The tower rises out of the opening shot; the ending tilts up to it.
@@ -62,6 +64,28 @@ Figures: her 30 px tall, the children 20 px.
 **Q:** Screen size. 320×180 matches the other games; 384×216 or 480×270 give more room for the figures and the
 bridge's detail (the layout tool shows each).
 
+## Parallax
+
+The world is wider than the screen and the camera moves (drifts right, back left, tilts up the tower), so each
+layer moves at its own fraction of the camera: a layer at 0 stays put, 1 moves with the bridge, above 1 passes
+faster than the bridge (foreground). Starting values:
+
+| Layer | Factor | |
+|---|---|---|
+| Sky, stars, moon | 0 | fixed: the moon stays put while the world slides beneath it |
+| Mountain | 0.1 | |
+| Hills and cliffs | 0.3 | |
+| Far bank, trees on it | 0.6 | |
+| River, bridge, lighthouse, town, figures | 1 | the layout tool's world coordinates |
+| Camellia, any near branches | 1.2 | only if it should pass in front; else 1 |
+
+- The same factors apply to the tilt up the tower: the mountain and moon barely rise, so the tower climbs past them.
+- Reflections move with the layer they reflect, so the mirrored moon stays put too.
+- Positions in the layout tool are where each layer sits in the opening shot (camera at x 0); a far layer's world
+  x is that divided by its factor. The tool doesn't preview parallax yet.
+- Offsets are whole pixels (rounded per layer), so layers step rather than smear; slow layers stepping at
+  different moments is part of the look.
+
 ## Cast
 
 All original (design logs in `docs/design-log/`, made in the character editor):
@@ -74,34 +98,37 @@ All original (design logs in `docs/design-log/`, made in the character editor):
 
 ## Beats
 
-Rough timings (total about 75 s); adjust freely.
+Rough timings (total about 85 s); adjust freely.
 
 | Time | Beat | Camera |
 |---|---|---|
 | 0–5 s | The scene at rest: bridge, river, a fishing boat ambling, lamps. | Opening shot |
-| 5–11 s | Two children run in from off-screen left (from the left of the tower stairs), over the top and down the bridge. They stop and look back the way they came. **Q:** or up at the tower? | Opening |
-| 11–16 s | The woman hurries in from the left behind them, catches the arm of the child furthest ahead, and gestures to the other to follow. | Opening |
-| 16–26 s | The three walk down to the inn. | Drifts right to the door shot |
-| 26–34 s | The proprietors open the door; she talks with them; they take the children in. | Door shot |
-| 34–40 s | She goes in with them; the inn's window lights flicker on. The steamer passes under the arch about now. | Door shot |
-| 40–46 s | She comes out, looks back up at the lit window where the children are, then up and down the street. | Door shot |
-| 46–56 s | She walks back up the bridge. | Drifts back to the tower shot |
-| 56–64 s | At the top she stands a moment, takes off the cloak and slings it over her arm. | Tower shot |
-| 64–72 s | She looks back and forth, climbs the stairs, unlocks the door and goes in. | Tower shot |
-| 72 s → | **Q:** does the lighthouse lamp light when she goes in? Then the scene settles. | Tilts up the tower, then holds |
+| 5–10 s | Two children run in from off-screen left (from the left of the tower stairs), over the top and down the bridge. They stop and look back the way they came. | Opening |
+| 10–15 s | They pause **separately**: one stops to try catching a firefly; the other runs on a few steps and looks over the railing. | Opening |
+| 15–21 s | Then **together**: the boat below sounds (a putter or a bell), and both look over one side, then cross to look over the other as it passes beneath. **Q:** which of the three (firefly, both sides, the boat's sound) go where, or all of them? | Opening |
+| 21–26 s | The woman hurries in from the left behind them, catches the arm of the child furthest ahead, and gestures to the other to follow. | Opening |
+| 26–36 s | The three walk down to the inn. | Drifts right to the door shot |
+| 36–44 s | The proprietors open the door; she talks with them; they take the children in. | Door shot |
+| 44–50 s | She goes in with them; the inn's window lights flicker on. The steamer passes under the arch about now. | Door shot |
+| 50–56 s | She comes out, looks back up at the lit window where the children are, then up and down the street. | Door shot |
+| 56–66 s | She walks back up the bridge. | Drifts back to the tower shot |
+| 66–74 s | At the top she stands a moment, takes off the cloak and slings it over her arm. | Tower shot |
+| 74–82 s | She looks back and forth, climbs the stairs, unlocks the door and goes in. | Tower shot |
+| 82 s → | A moment after the door closes, the lighthouse lamp lights. Then the scene settles. | Tilts up the tower, then holds |
 
 Throughout: one or two fishing boats amble on the river; one larger steamer passes under the bridge once.
 
 ## Ending
 
-The story plays once, then the scene settles into a seamless ambient loop (river, boats, lamps, spotlights, and the
-lighthouse if it is lit), so "this goes on all night". A replay starts the story again.
+The story plays once, then the scene settles into a seamless ambient loop (river, boats, lamps, spotlights, fireflies,
+and the lit lighthouse lamp), so "this goes on all night". A replay starts the story again.
 
 ## How it's built
 
 - A timeline that is a pure function of time, as in the garden: `?t=` jumps to any moment, `?freeze=1` holds it.
 - The ambient loop follows the garden's rules and gets the same tests: whole cycles per loop, everything reset
   at the loop point, the second loop identical to the first.
+- Parallax is an offset per layer, `round(camera × factor)`, computed from time like everything else.
 - Built on a cinematic engine shared with the garden (to be extracted first), not a fourth copy of the core.
 - Same rendering rules as the other pages: palette-index framebuffer, light by palette remaps, ordered dither,
   whole pixels, no smoothing.
@@ -109,7 +136,7 @@ lighthouse if it is lit), so "this goes on all night". A replay starts the story
 ## Open questions
 
 - **Q:** screen size (above).
-- **Q:** what the children look at when they stop.
-- **Q:** does the lighthouse lamp light when she enters?
-- **Q:** sound: none, ambient only, or a few cues (footsteps, the inn door, the key, the lamp)?
+- **Q:** the order of the children's pauses (above).
+- **Q:** sound: at least the boat the children hear, so a boat sound is needed. Beyond that: ambient only, or a few
+  cues (footsteps, the inn door, the key, the lamp)?
 - **Q:** the fishing boats' and steamer's directions.
