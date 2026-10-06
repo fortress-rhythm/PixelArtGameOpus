@@ -5,7 +5,7 @@ let simFrame = 0, rbDrawX = STEP_X + RB_GAP, rbDrawFace = -1;
 const DRIP_CUTOFF = LOOP_S - WS_LIFE - 1.5;          // wet spots from drips must dry before the loop point
 
 function loopReset() {
-  particlesReset(); bedWet.fill(0); wsLife.fill(0); bloomPerk.fill(-1); robotReset();
+  particlesReset(); bedWet.fill(0); wsLife.fill(0); wsNext = 0; bloomPerk.fill(-1); robotReset();
 }
 function sunScreenX(camX) { return SUN_X - Math.round(camX * F_SKY); }
 function poseTick(f) {
