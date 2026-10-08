@@ -70,15 +70,52 @@
  * the frame, ?stats=1 writes the mean/max frame cost into the page title.
  * ===================================================================
  */
+// @ts-check
+// =================================================================== CINEMATIC CORE: BASE
+// Shared by the cinematic scenes (src_garden, src_bridge). Loads first: the timing constants and the pure helpers.
+// A scene's own config comes next (W, H, IY0, IY1, IH, LOOP_S, CINE_S, PAL_HEX, its palette remaps), then
+// 01_frame.js, then the scene, then 99_main.js. Everything shares one global scope.
 'use strict';
 
-// ------------------------------------------------------------------ constants
-const W = 320, H = 180, BAR = 23, IH = 134, IY0 = BAR, IY1 = BAR + IH;
 const FPS = 60, DT = 1 / FPS;
-const LOOP_S = 54, LOOP_F = LOOP_S * FPS;          // 3240 ticks
-const CAM_MAX_X = 160, CAM_MAX_Y = 16;
 const TAU = Math.PI * 2;
 const T = 255;                                      // transparent index in sprite/layer buffers
+
+// ------------------------------------------------------------------ palette remaps
+function makeMap(pairs) {
+  const m = new Uint8Array(256);
+  for (let i = 0; i < 256; i++) m[i] = i;
+  for (let i = 0; i < pairs.length; i += 2) m[pairs[i]] = pairs[i + 1];
+  return m;
+}
+
+// ------------------------------------------------------------------ math / noise helpers
+const BAYER = new Float32Array([0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map(v => (v + 0.5) / 16));
+function bay(x, y) { return BAYER[((y & 3) << 2) | (x & 3)]; }
+// integer hash (0..65535, always a small int so calls never box a double) + tiny inlinable scaler
+function hashi(a, b) {
+  let h = Math.imul(a | 0, 0x27d4eb2d) ^ Math.imul(b | 0, 0x165667b1) ^ 0x5bd1e995;
+  h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d);
+  h = Math.imul(h ^ (h >>> 12), 0x297a2d39);
+  return (h ^ (h >>> 15)) >>> 16;
+}
+function hash(a, b) { return hashi(a, b) * 1.52587890625e-5; }   // [0,1)
+function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+function lerp(a, b, t) { return a + (b - a) * t; }
+function smooth(t) { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); }
+function smoother(t) { t = clamp(t, 0, 1); return t * t * t * (t * (t * 6 - 15) + 10); }
+function frac(v) { return v - Math.floor(v); }
+// loop-locked oscillator: k whole cycles per loop
+function osc(k, t, ph) { return Math.sin(TAU * (k * t / LOOP_S + ph)); }
+// smooth 1D value noise, periodic with period p (integer)
+function pnoise(x, p, seed) {
+  const i = Math.floor(x), f = x - i, a = hash(((i % p) + p) % p, seed), b = hash((((i + 1) % p) + p) % p, seed);
+  return lerp(a, b, f * f * (3 - 2 * f));
+}
+// ------------------------------------------------------------------ constants
+const W = 320, H = 180, BAR = 23, IH = 134, IY0 = BAR, IY1 = BAR + IH;
+const LOOP_S = 54, LOOP_F = LOOP_S * FPS;          // 3240 ticks
+const CAM_MAX_X = 160, CAM_MAX_Y = 16;
 
 // ------------------------------------------------------------------ palette (53)
 const PAL_HEX = [
@@ -115,12 +152,6 @@ const C = {
 const NPAL = PAL_HEX.length;
 
 // ------------------------------------------------------------------ light ramps (palette remaps)
-function makeMap(pairs) {
-  const m = new Uint8Array(256);
-  for (let i = 0; i < 256; i++) m[i] = i;
-  for (let i = 0; i < pairs.length; i += 2) m[pairs[i]] = pairs[i + 1];
-  return m;
-}
 // warm lamp / blind-slat light: one step brighter and warmer
 const LIT = makeMap([
   0, 1, 1, 40, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 9, 5, 10, 31, 11, 12, 12, 23, 13, 14, 14, 4,
@@ -151,35 +182,21 @@ const GRN = new Uint8Array(256);
 [[0, 1], [1, 0], [2, 1], [11, 12], [12, 11], [13, 2], [18, 19], [19, 18], [22, 1], [27, 26],
  [28, 1], [40, 1], [44, 1], [48, 0]].forEach(p => { GRN[p[0]] = p[1] + 1; });
 
-// ------------------------------------------------------------------ math / noise helpers
-const BAYER = new Float32Array([0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map(v => (v + 0.5) / 16));
-function bay(x, y) { return BAYER[((y & 3) << 2) | (x & 3)]; }
-// integer hash (0..65535, always a small int so calls never box a double) + tiny inlinable scaler
-function hashi(a, b) {
-  let h = Math.imul(a | 0, 0x27d4eb2d) ^ Math.imul(b | 0, 0x165667b1) ^ 0x5bd1e995;
-  h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d);
-  h = Math.imul(h ^ (h >>> 12), 0x297a2d39);
-  return (h ^ (h >>> 15)) >>> 16;
-}
-function hash(a, b) { return hashi(a, b) * 1.52587890625e-5; }   // [0,1)
-function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
-function lerp(a, b, t) { return a + (b - a) * t; }
-function smooth(t) { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); }
-function smoother(t) { t = clamp(t, 0, 1); return t * t * t * (t * (t * 6 - 15) + 10); }
-function frac(v) { return v - Math.floor(v); }
-// loop-locked oscillator: k whole cycles per loop
-function osc(k, t, ph) { return Math.sin(TAU * (k * t / LOOP_S + ph)); }
-// smooth 1D value noise, periodic with period p (integer)
-function pnoise(x, p, seed) {
-  const i = Math.floor(x), f = x - i, a = hash(((i % p) + p) % p, seed), b = hash((((i + 1) % p) + p) % p, seed);
-  return lerp(a, b, f * f * (3 - 2 * f));
-}
-
-// ------------------------------------------------------------------ framebuffer
-const fb = new Uint8Array(W * H);     // palette indices
-const lid = new Uint8Array(W * H);    // layer ids (light masks)
 const L = { NONE: 0, SKY: 1, CLOUD: 2, FAR: 3, BAY: 4, MID: 5, HILL: 6, WALL: 7, GROUND: 8,
             BED: 9, PROP: 10, HOUSE: 11, ROBOT: 12, HER: 13, WATER: 14, CAR: 15, FG: 16, GLASS: 17 };
+
+const M_ALL = 0x7fffffff;
+const M_SKYISH = (1 << L.SKY) | (1 << L.CLOUD);
+const M_GROUNDISH = (1 << L.GROUND) | (1 << L.BED) | (1 << L.PROP) | (1 << L.WALL);
+const M_LIT = M_GROUNDISH | (1 << L.HER) | (1 << L.ROBOT) | (1 << L.HOUSE) | (1 << L.GLASS);
+
+// A cinematic scene needs CINE_S, the length of its timeline in seconds (?t= seeks within it).
+const CINE_S = LOOP_S;
+// @ts-check
+// =================================================================== CINEMATIC CORE: FRAMEBUFFER AND LAYERS
+// After the scene's config: needs W, H, IY0, IY1 (the image rows between any letterbox bars), IH and T.
+const fb = new Uint8Array(W * H);     // palette indices
+const lid = new Uint8Array(W * H);    // layer ids (light masks)
 
 function pset(x, y, c, id) {
   if (x < 0 || x >= W || y < IY0 || y >= IY1) return;
@@ -198,10 +215,6 @@ function premap(x, y, map, mask) {
   const i = y * W + x;
   if (mask & (1 << lid[i])) fb[i] = map[fb[i]];
 }
-const M_ALL = 0x7fffffff;
-const M_SKYISH = (1 << L.SKY) | (1 << L.CLOUD);
-const M_GROUNDISH = (1 << L.GROUND) | (1 << L.BED) | (1 << L.PROP) | (1 << L.WALL);
-const M_LIT = M_GROUNDISH | (1 << L.HER) | (1 << L.ROBOT) | (1 << L.HOUSE) | (1 << L.GLASS);
 
 // ------------------------------------------------------------------ layer buffers
 function makeLayer(w, h, f, defId) {
@@ -2038,8 +2051,16 @@ function render(f) {
 
 }
 
-// =================================================================== DISPLAY + MAIN LOOP
-const screenCv = document.getElementById('screen');
+// built once by init() in src_cine/99_main.js
+function sceneBuild() {
+  buildSky(); buildFar(); buildFog(); buildMid(); buildHill(); buildGarden(); buildCar(); buildForeground();
+  buildVignette(); buildCameraPath();
+}
+// @ts-check
+// =================================================================== CINEMATIC CORE: DISPLAY AND MAIN LOOP
+// Loads last. The scene provides sceneBuild(), loopReset(), update(f), step(), render(f), simFrame and CINE_S.
+// step() advances simFrame by one and wraps it where the scene's loop starts again.
+const screenCv = /** @type {HTMLCanvasElement} */ (document.getElementById('screen'));
 const sctx = screenCv.getContext('2d', { alpha: false });
 const offCv = document.createElement('canvas');
 offCv.width = W; offCv.height = H;
@@ -2089,11 +2110,10 @@ function frameLoop(now) {
   requestAnimationFrame(frameLoop);
 }
 function init() {
-  buildSky(); buildFar(); buildFog(); buildMid(); buildHill(); buildGarden(); buildCar(); buildForeground();
-  buildVignette(); buildCameraPath();
+  sceneBuild();
   loopReset();
   const seek = parseFloat(params.get('t') || '0');
-  const target = Math.floor(clamp(isNaN(seek) ? 0 : seek, 0, LOOP_S - DT) * FPS);
+  const target = Math.floor(clamp(isNaN(seek) ? 0 : seek, 0, CINE_S - DT) * FPS);
   simFrame = 0; update(0);
   while (simFrame < target) step();
   resize();

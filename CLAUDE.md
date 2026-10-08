@@ -8,7 +8,7 @@ from sources:
 |---|---|---|
 | `hourglass_city.html` | `src/*.js` | **The Hourglass City**, isometric point-and-click adventure, Act I |
 | `hourglass_testlevel.html` | `src/01–12` + `src_test/` | **The Black Sedan**, driving and gunplay on the same engine |
-| `ravenshore_garden.html` | `src_garden/` | **Ravenshore Garden**, a cinematic loop (its own engine) |
+| `ravenshore_garden.html` | `src_garden/` + `src_cine/` | **Ravenshore Garden**, a cinematic loop (its own engine on the shared cinematic core) |
 | `character_editor.html` | `src/01,03,04,13` + `tools/character_editor/` | the character editor |
 
 **Licence:** the code is MIT. The story, characters, setting, names and dialogue of *The Hourglass City* are
@@ -41,6 +41,10 @@ The user is on Windows. Give `npm`/`node` commands; nothing the user runs may ne
 - **Rooms** (`src/30_*.js`–`45_*.js`): `defRoom({ id, bounds, walk, block, lights, occluders, hotspots, build() })`,
   coordinates in metres. Hotspot fields: `id, name, at` (where Frank stands), `pos` (the object), `face, look, use,
   talk, items{}, cond, exit{room,x,y,dir}`.
+- **Cinematic scenes** (`src_cine/` + a scene folder): `00_base.js` (timing, hashes, dither, `osc`, `makeMap`), the
+  scene's own first file (screen size, palette, remaps, `LOOP_S`, `CINE_S`), `01_frame.js` (framebuffer, layers,
+  `blit`), the scene, then `99_main.js` (display, `?t=`/`?freeze=1`/`?stats=1`, the main loop). The scene provides
+  `sceneBuild()`, `loopReset()`, `update(f)`, `step()`, `render(f)` and `simFrame`.
 - **Scripts** are arrays of commands: `['say', who, text]`, `['walk', who, x, y, dir]`, `['face', who, target]`,
   `['pose', who, name, secs, block]`, `['wait', s]`, `['fade', 'out'|'in', s]`, `['room', id, x, y, dir]`,
   `['choice', [{ t, c, d, once, say }]]`, `['give'|'take', item]`, `['clue', id]`, `['ded', id]`, `['flag', k, v]`,

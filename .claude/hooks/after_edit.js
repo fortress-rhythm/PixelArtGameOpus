@@ -8,7 +8,8 @@ process.stdin.on('end', () => {
   let file = '';
   try { file = (JSON.parse(input).tool_input || {}).file_path || ''; } catch (e) { return; }
   const root = path.join(__dirname, '..', '..'), rel = path.relative(root, file).split(path.sep).join('/');
-  const target = /^src\/.*\.js$/.test(rel) ? ['city', 'test'] : /^src_test\/.*\.js$/.test(rel) ? ['test'] : /^src_garden\/.*\.js$/.test(rel) ? ['garden'] : null;
+  const target = /^src\/.*\.js$/.test(rel) ? ['city', 'test'] : /^src_test\/.*\.js$/.test(rel) ? ['test'] : /^src_garden\/.*\.js$/.test(rel) ? ['garden']
+    : /^src_cine\/.*\.js$/.test(rel) ? ['garden'] : null;
   if (!target) return;
   try { execFileSync(process.execPath, [path.join(root, 'tools', 'build.js')].concat(target), { stdio: 'pipe' }); }
   catch (e) { process.stderr.write('build failed after editing ' + rel + ':\n' + e.stderr); process.exit(2); }

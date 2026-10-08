@@ -1,7 +1,7 @@
 // Ravenshore Garden: the loop is seamless and every frame depends only on the time in the loop
 const test = require('node:test'), assert = require('node:assert'), fs = require('fs'), path = require('path');
 const { loadGame } = require('./helpers');
-const FILES = fs.readdirSync(path.join(__dirname, '..', '..', 'src_garden')).filter(f => f.endsWith('.js')).sort().map(f => 'src_garden/' + f);
+const FILES = require('../../tools/build').TARGETS.garden().files;      // the scene and the shared cinematic core
 const garden = (search) => loadGame({ files: FILES, search });   // init() runs: builds the scene, seeks to ?t=
 // the rendered frame (palette indices) at the current simulation frame
 const frame = (g) => { g.render(g.simFrame); return Buffer.from(g.fb); };

@@ -1,5 +1,5 @@
 {
-  // Ravenshore Garden: its own engine, one global scope.
+  // Ravenshore Garden: its own scene on the shared cinematic core (src_cine), one global scope.
   "compilerOptions": { "target": "es2022", "lib": ["es2022", "dom"], "checkJs": false, "noEmit": true },
-  "include": ["*.js"]
+  "include": ["*.js", "../src_cine/*.js"]
 }

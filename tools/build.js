@@ -11,12 +11,19 @@ const SHARED = ['01_core', '02_font', '03_iso', '04_people', '05_engine', '08_au
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const jsIn = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter(f => f.endsWith('.js')).sort().map(f => dir + '/' + f);
 
+// a cinematic scene: the shared core's base, the scene's config (its first file), the shared framebuffer, the rest of
+// the scene, the shared main loop
+function cine(dir) {
+  const own = jsIn(dir);
+  return ['src_cine/00_base.js', own[0], 'src_cine/01_frame.js', ...own.slice(1), 'src_cine/99_main.js'];
+}
+
 // each target: output file, the head, the sources in order, and whether a newline follows each source
 const TARGETS = {
   city:   () => ({ out: 'hourglass_city.html', head: 'src/00_head.html', files: jsIn('src'), nl: true, dirs: ['src'] }),
   test:   () => ({ out: 'hourglass_testlevel.html', head: 'src_test/t00_head.html',
                    files: SHARED.map(f => 'src/' + f + '.js').concat(jsIn('src_test')), nl: true, dirs: ['src', 'src_test'] }),
-  garden: () => ({ out: 'ravenshore_garden.html', head: 'src_garden/00_head.html', files: jsIn('src_garden'), nl: false, dirs: ['src_garden'] }),
+  garden: () => ({ out: 'ravenshore_garden.html', head: 'src_garden/00_head.html', files: cine('src_garden'), nl: false, dirs: ['src_garden', 'src_cine'] }),
   // the character editor draws with the game's own code
   editor: () => ({ out: 'character_editor.html', head: 'tools/character_editor/head.html',
                    files: ['src/01_core.js', 'src/03_iso.js', 'src/04_people.js', 'src/13_portraits.js', 'tools/art_core.js', 'tools/character_editor/editor.js'], nl: true,
