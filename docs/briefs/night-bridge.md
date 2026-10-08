@@ -1,7 +1,9 @@
-# Night Bridge — cinematic scene brief (draft)
+# Night Bridge — cinematic scene brief
 
 A new cinematic scene, separate from Ravenshore Garden and set in the fork's own world (not Ravenshore: that
-setting is © Odiriuss). This is a draft to edit before anything is built. Open questions are marked **Q:**.
+setting is © Odiriuss). **Built:** `night_bridge.html`, from `src_bridge/` on the shared cinematic core
+(`src_cine/`). Where the build had to decide something this brief left open, it says so under **Decided in the
+build**; change any of it here and in the sources.
 
 Layout tool: <https://claude.ai/artifact/HWS7V8ao8GacL9atNQLFxC> — set the bridge, land and camera shots there and
 paste its "For the brief" text over the **Layout** section below.
@@ -63,9 +65,6 @@ Parallax: sky and moon 0, mountain 0.1, hills and cliffs 0.3, camellia 1. Every 
 opening shot.
 ```
 
-**Q:** Screen size. 320×180 matches the other games; 384×216 or 480×270 give more room for the figures and the
-bridge's detail (the layout tool shows each).
-
 ## Parallax
 
 The world is wider than the screen and the camera moves (drifts right, back left, tilts up the tower), so each
@@ -98,25 +97,26 @@ All original (design logs in `docs/design-log/`, made in the character editor):
 
 ## Beats
 
-Rough timings (total about 85 s); adjust freely.
+As built (`src_bridge/04_story.js`); story 92 s, then the loop.
 
 | Time | Beat | Camera |
 |---|---|---|
-| 0–5 s | The scene at rest: bridge, river, a fishing boat ambling, lamps. | Opening shot |
-| 5–10 s | Two children run in from off-screen left (from the left of the tower stairs), over the top and down the bridge. They stop and look back the way they came. | Opening |
-| 10–15 s | They pause **separately**: one stops to try catching a firefly; the other runs on a few steps and looks over the railing. | Opening |
-| 15–21 s | Then **together**: the boat below sounds (a putter or a bell), and both look over one side, then cross to look over the other as it passes beneath. **Q:** which of the three (firefly, both sides, the boat's sound) go where, or all of them? | Opening |
-| 21–26 s | The woman hurries in from the left behind them, catches the arm of the child furthest ahead, and gestures to the other to follow. | Opening |
-| 26–36 s | The three walk down to the inn. | Drifts right to the door shot |
-| 36–44 s | The proprietors open the door; she talks with them; they take the children in. | Door shot |
-| 44–50 s | She goes in with them; the inn's window lights flicker on. The steamer passes under the arch about now. | Door shot |
-| 50–56 s | She comes out, looks back up at the lit window where the children are, then up and down the street. | Door shot |
-| 56–66 s | She walks back up the bridge. | Drifts back to the tower shot |
-| 66–74 s | At the top she stands a moment, takes off the cloak and slings it over her arm. | Tower shot |
-| 74–82 s | She looks back and forth, climbs the stairs, unlocks the door and goes in. | Tower shot |
-| 82 s → | A moment after the door closes, the lighthouse lamp lights. Then the scene settles. | Tilts up the tower, then holds |
+| 0–5 s | The scene at rest: bridge, river, the moored fishing boat, lamps, fireflies. | Opening shot |
+| 5–10 s | The two children run in from off-screen left, over the top and down the bridge. They stop and look back the way they came. | Opening |
+| 10–17 s | Separately: the younger one tries to catch a firefly (reaching, two claps, it gets away upwards); the older one walks on and leans over the far railing, where a fishing boat is coming down the river, then waves the younger one over. | Opening |
+| 17–25 s | Together: both lean over the far railing as the boat comes (its engine, then its bell); it passes under them and they cross to lean over the near railing as it comes out on our side. | Opening |
+| 21–27 s | The woman hurries in from the left, catches the older child's arm and waves the younger one to follow. | Opening |
+| 27–38 s | The three walk down to the inn, her hand on the older child's arm. | Drifts right to the door shot |
+| 38–46 s | The innkeepers open the door; she talks with them; the wife beckons the children in. | Door shot |
+| 46–52 s | She goes in after them; the upstairs window flickers on. | Door shot |
+| 52–58 s | She comes out, the door shuts behind her; she looks up at the lit window, then up and down the street. | Door shot |
+| 58–72 s | She walks back up the bridge. | Drifts back to the tower shot |
+| 70–76 s | The steamer passes under the arch and sounds its horn, while she stands at the top, facing out. | Tower shot |
+| 74–78 s | She takes off the cloak and folds it over her arm. | Tower shot |
+| 78–85 s | She looks both ways, climbs the stairs, unlocks the door and goes in. | Tower shot |
+| 86 s → | The lighthouse lamp lights; its beam starts to turn. | Tilts up the tower, then holds |
 
-Throughout: one or two fishing boats amble on the river; one larger steamer passes under the bridge once.
+Throughout: one fishing boat is moored near the town, bobbing; another comes down the river past the children.
 
 ## Ending
 
@@ -129,14 +129,27 @@ and the lit lighthouse lamp), so "this goes on all night". A replay starts the s
 - The ambient loop follows the garden's rules and gets the same tests: whole cycles per loop, everything reset
   at the loop point, the second loop identical to the first.
 - Parallax is an offset per layer, `round(camera × factor)`, computed from time like everything else.
-- Built on a cinematic engine shared with the garden (to be extracted first), not a fourth copy of the core.
+- Built on the cinematic core shared with the garden (`src_cine/`), not a fourth copy of the core.
 - Same rendering rules as the other pages: palette-index framebuffer, light by palette remaps, ordered dither,
   whole pixels, no smoothing.
 
-## Open questions
+## Decided in the build
 
-- **Q:** screen size (above).
-- **Q:** the order of the children's pauses (above).
-- **Q:** sound: at least the boat the children hear, so a boat sound is needed. Beyond that: ambient only, or a few
-  cues (footsteps, the inn door, the key, the lamp)?
-- **Q:** the fishing boats' and steamer's directions.
+Change any of these freely.
+
+- **Screen:** 320×180, no letterbox, as the layout tool's default.
+- **Layout:** the tool's default numbers (`LAY` in `src_bridge/01_config.js`, same names as the tool). If you tuned
+  the tool, paste its "For the brief" text and the numbers go into `LAY`.
+- **Sizes the tool couldn't judge without people,** set to fit a 30 px woman (`SIZE` in the same file): trees in
+  pots 38 px (tool 18), the lighthouse 18 px wide (tool 10) with a 10×33 door, a railing 12 px high, the inn's
+  door 16×34. The town's street is level with the bridge's right end, and the shops are two and three storeys.
+- **Boats:** the river runs towards us under the bridge, so the boats travel in depth: they grow as they come
+  nearer. The children's boat comes down from behind the bridge; the steamer does too, under the arch, then turns
+  away to the left.
+- **The steamer** passes under the bridge at 70 s, not 44 s: the arch is only tall enough near its middle, which
+  the door shot doesn't see. It now passes while she stands at the top, a quiet moment.
+- **The children's pauses:** firefly (the younger) and the far railing (the older) separately, then both railings
+  together, with the boat's sound.
+- **Sound:** generated, a few cues: the river, the fishing boat's engine and bell, the inn door, the steamer's
+  rumble and horn, the key, the tower door, the lamp. Browsers need a click or a key first (M mutes).
+- **The ambient loop** is 24 s on the tilted tower shot: the beam turns three times, lamps, glows, fireflies, stars.

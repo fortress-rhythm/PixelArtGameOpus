@@ -9,6 +9,7 @@ Each game is a single self-contained HTML file. They use plain JavaScript and Ca
 | [`hourglass_city.html`](hourglass_city.html) | **The Hourglass City**, an isometric point-and-click adventure (Act I, *The Ordinary Dead*) |
 | [`hourglass_testlevel.html`](hourglass_testlevel.html) | **The Black Sedan**, a real-time test level: take any car, chase the sedan, fight its crew at Pier 9 |
 | [`ravenshore_garden.html`](ravenshore_garden.html) | **Ravenshore Garden**, a cinematic pixel-art loop |
+| [`night_bridge.html`](night_bridge.html) | **Night Bridge**, a cinematic scene: a short story on a glass bridge, then a loop |
 | [`character_editor.html`](character_editor.html) | **Character editor**: make a character's doll and portrait, check its silhouette, copy the definition |
 
 ## Play
@@ -67,15 +68,22 @@ Add these URL options to the file address: `?start=chase` or `?start=fight` jump
 
 A looping evening scene in a garden above the Ravenshore skyline. A woman waters the flower beds with her companion robot, and an aircar arrives at the end of the loop.
 
+## Night Bridge
+
+![Night Bridge](docs/bridge.png)
+
+This fork's own cinematic scene, on the garden's engine. Two children run out onto a glass bridge at night; a woman in a red cloak catches them, takes them to an inn, walks back up, takes off the cloak and lets herself into the lighthouse, whose lamp then lights. The story plays once, then the scene settles into a seamless loop. Click or press a key for sound (M mutes); `?t=SECONDS` jumps to a moment, `&freeze=1` holds it. The brief and its layout are in [`docs/briefs/night-bridge.md`](docs/briefs/night-bridge.md).
+
 ## Building from source
 
 Each HTML file is built by concatenating its sources. The build is plain Node, so it works the same on Windows, macOS and Linux:
 
 ```sh
-npm run build                 # all three
+npm run build                 # all of them
 node tools/build.js city      # src/ -> hourglass_city.html
 node tools/build.js test      # src/ (shared engine) + src_test/ -> hourglass_testlevel.html
-node tools/build.js garden    # src_garden/ -> ravenshore_garden.html
+node tools/build.js garden    # src_garden/ + src_cine/ -> ravenshore_garden.html
+node tools/build.js bridge    # src_bridge/ + src_cine/ -> night_bridge.html
 node tools/build.js editor    # the engine's people + tools/character_editor/ -> character_editor.html
 npm run watch                 # rebuild on every save
 ```
@@ -92,7 +100,7 @@ The headless browser tests use [puppeteer-core](https://pptr.dev/) with an insta
 ```sh
 npm install
 npm test              # everything
-npm run test:unit     # Node only, no browser: engine, story, people, tools, and the garden loop's seam
+npm run test:unit     # Node only, no browser: engine, story, people, tools, and the cinematic loops' seams
 npm run test:city     # both story routes, keyboard play with save and load, room exits and entrances
 npm run test:level    # bot playthrough of the chase and fight, interactions, menus, the streetcar
 ```

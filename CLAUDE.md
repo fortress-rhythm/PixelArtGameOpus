@@ -1,14 +1,15 @@
 # PixelArtGameOpus — working notes for Claude
 
 Noir pixel-art games in the browser, every pixel and sound generated in code (no image, font or audio files).
-This is fortress-rhythm's fork of Odiriuss's repository. Three games and one tool, each a single HTML file built
-from sources:
+This is fortress-rhythm's fork of Odiriuss's repository. Three games, two cinematic scenes and one tool, each a single
+HTML file built from sources:
 
 | Page | Sources | What |
 |---|---|---|
 | `hourglass_city.html` | `src/*.js` | **The Hourglass City**, isometric point-and-click adventure, Act I |
 | `hourglass_testlevel.html` | `src/01–12` + `src_test/` | **The Black Sedan**, driving and gunplay on the same engine |
 | `ravenshore_garden.html` | `src_garden/` + `src_cine/` | **Ravenshore Garden**, a cinematic loop (its own engine on the shared cinematic core) |
+| `night_bridge.html` | `src_bridge/` + `src_cine/` | **Night Bridge**, this fork's own cinematic scene: the story once, then a loop ([brief](docs/briefs/night-bridge.md)) |
 | `character_editor.html` | `src/01,03,04,13` + `tools/character_editor/` | the character editor |
 
 **Licence:** the code is MIT. The story, characters, setting, names and dialogue of *The Hourglass City* are
@@ -19,10 +20,10 @@ into new material.
 
 ```bash
 npm install                       # once (puppeteer-core, typescript)
-npm run build                     # all pages; node tools/build.js city|test|garden|editor for one
+npm run build                     # all pages; node tools/build.js city|test|garden|bridge|editor for one
 npm run watch                     # rebuild on save
 npm run check                     # story check: file:line problems in the adventure's story and rooms
-npm run test:unit                 # Node only: engine, story check, edit mode, people, portraits, extension, garden loop
+npm run test:unit                 # Node only: engine, story check, edit mode, people, portraits, extension, garden and bridge loops
 npm test                          # everything, including the browser playthroughs (needs Chrome; CHROME_PATH)
 npm run typecheck                 # files that start with // @ts-check
 node tools/sprite_sheet.js [ids] [--silhouette|--walk|--portraits]   # cast to shots/*.png
@@ -44,7 +45,10 @@ The user is on Windows. Give `npm`/`node` commands; nothing the user runs may ne
 - **Cinematic scenes** (`src_cine/` + a scene folder): `00_base.js` (timing, hashes, dither, `osc`, `makeMap`), the
   scene's own first file (screen size, palette, remaps, `LOOP_S`, `CINE_S`), `01_frame.js` (framebuffer, layers,
   `blit`), the scene, then `99_main.js` (display, `?t=`/`?freeze=1`/`?stats=1`, the main loop). The scene provides
-  `sceneBuild()`, `loopReset()`, `update(f)`, `step()`, `render(f)` and `simFrame`.
+  `sceneBuild()`, `loopReset()`, `update(f)`, `step()`, `render(f)` and `simFrame`. Night Bridge simulates
+  nothing: `render(f)` is a pure function of the time, its story is data in `src_bridge/04_story.js` (moves, views,
+  depth, gestures per person; camera, door, lamp and boat keys; sound cues), and `LAY` in `01_config.js` holds the
+  layout tool's numbers under the tool's own names.
 - **Scripts** are arrays of commands: `['say', who, text]`, `['walk', who, x, y, dir]`, `['face', who, target]`,
   `['pose', who, name, secs, block]`, `['wait', s]`, `['fade', 'out'|'in', s]`, `['room', id, x, y, dir]`,
   `['choice', [{ t, c, d, once, say }]]`, `['give'|'take', item]`, `['clue', id]`, `['ded', id]`, `['flag', k, v]`,
@@ -78,8 +82,10 @@ The user is on Windows. Give `npm`/`node` commands; nothing the user runs may ne
   about five minutes.
 - **Room geometry:** use edit mode (`hourglass_city.html?edit=1&room=<id>`, or F2) to place things and copy the
   lines, rather than guessing coordinates. Exits must land on walkable ground (the story check enforces it).
-- **The garden loop must stay seamless** (`tests/unit/garden.test.js`): anything that repeats runs a whole number
-  of cycles per loop (`osc(k, …)` or `N * t / LOOP_S` with whole k, N), and anything with state resets in `loopReset`.
+- **The cinematic loops must stay seamless** (`tests/unit/garden.test.js`, `tests/unit/bridge.test.js`): anything
+  that repeats runs a whole number of cycles per loop (`osc(k, …)` or `N * t / LOOP_S` with whole k, N), anything
+  with state resets in `loopReset`, and anything re-rolled by hash uses the wrapped frame (`loopFrame(f)` in the
+  bridge). The bridge's colours for her (hair, cloak, tunic) are a palette family nothing else may map into.
 - **Git:** small commits that each do one thing; fast-forward merges only.
 
 ## Skills
