@@ -51,7 +51,7 @@ paste its "For the brief" text over the **Layout** section below.
 Screen 320×180. World 620 px wide, 70 px of room above the opening shot.
 Heights are % of screen height, up from the bottom of the opening shot; x is in world pixels.
 River surface 16%. Hills 28% with 3 violet-plum cliffs; horizon slopes 4% across the world.
-Mountain at x 300, 64% high, 380 px wide. Moon at x 520, 78%, radius 10 px, behind the camellia at x 500.
+Mountain at x 300, 64% high, 380 px wide. Moon at x 200, 78%, radius 10 px; camellia at x 500.
 Bridge deck: left end x −30 at 22%, top at x 150 and 40%, right end x 420 at 24%.
 Arch beneath: 6 px below the deck at the top, 30 px near the ends, sharpness 3. End spans 44 px with 2 openings.
 Girders: 12 panels. 6 inner glows, lamps every 18 px, 3 spotlights. 7 trees, 18 px, every 3rd a larch.
@@ -59,6 +59,8 @@ Lighthouse behind the top at x 160, 10 px wide, rising 96 px above its door; sta
 Town: 4 shops from x 470; shop 2 is the inn.
 Shots: opening at x 0; shop door at x 300; tower at x 20, tilted up 40 px.
 Figures: her 30 px tall, the children 20 px.
+Parallax: sky and moon 0, mountain 0.1, hills and cliffs 0.3, camellia 1. Every x is where a thing sits in the
+opening shot.
 ```
 
 **Q:** Screen size. 320×180 matches the other games; 384×216 or 480×270 give more room for the figures and the
@@ -68,23 +70,21 @@ bridge's detail (the layout tool shows each).
 
 The world is wider than the screen and the camera moves (drifts right, back left, tilts up the tower), so each
 layer moves at its own fraction of the camera: a layer at 0 stays put, 1 moves with the bridge, above 1 passes
-faster than the bridge (foreground). Starting values:
+faster than the bridge (foreground).
 
-| Layer | Factor | |
-|---|---|---|
-| Sky, stars, moon | 0 | fixed: the moon stays put while the world slides beneath it |
-| Mountain | 0.1 | |
-| Hills and cliffs | 0.3 | |
-| Far bank, trees on it | 0.6 | |
-| River, bridge, lighthouse, town, figures | 1 | the layout tool's world coordinates |
-| Camellia, any near branches | 1.2 | only if it should pass in front; else 1 |
+**The speeds are tuned in the layout tool for now** (its *Parallax* group; scrub the camera or play its moves to
+judge them) and come into this brief with the rest of its "For the brief" text. Its starting values: sky and moon 0,
+mountain 0.1, hills and cliffs 0.3, the bridge, river, town and figures 1, the camellia 1 (above 1 if it should
+pass in front).
 
-- The same factors apply to the tilt up the tower: the mountain and moon barely rise, so the tower climbs past them.
+- Every x in the layout is where a thing sits in the opening shot. A layer then moves
+  `round((camera − opening x) × speed)` pixels as the camera moves, and `round(tilt × speed)` as it tilts, so with
+  speed 0 the moon stays at the same place on screen in every shot. The tool reports where the moon and the
+  camellia land in the door shot.
+- On the tilt up the tower the mountain and moon barely rise, so the tower climbs past them.
 - Reflections move with the layer they reflect, so the mirrored moon stays put too.
-- Positions in the layout tool are where each layer sits in the opening shot (camera at x 0); a far layer's world
-  x is that divided by its factor. The tool doesn't preview parallax yet.
-- Offsets are whole pixels (rounded per layer), so layers step rather than smear; slow layers stepping at
-  different moments is part of the look.
+- Offsets are whole pixels, rounded per layer, so layers step rather than smear; slow layers stepping at different
+  moments is part of the look.
 
 ## Cast
 
