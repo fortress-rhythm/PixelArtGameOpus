@@ -1,0 +1,1335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Night Bridge</title>
+<style>
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; }
+  canvas#screen { display: block; position: fixed; left: 0; top: 0; width: 100vw; height: 100vh;
+                  image-rendering: crisp-edges; image-rendering: pixelated; background: #000; }
+  #hint { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); color: #a49cb8; font: 13px system-ui, sans-serif;
+          letter-spacing: .04em; opacity: .85; transition: opacity 1.2s; pointer-events: none; }
+</style>
+</head>
+<body>
+<canvas id="screen"></canvas>
+<div id="hint">click or press a key for sound</div>
+<script>
+/*
+ * NIGHT BRIDGE - a cinematic scene. Vanilla JS + Canvas 2D, no external assets. Brief: docs/briefs/night-bridge.md.
+ *
+ * A woman in a red cloak catches two children on a glass bridge at night, takes them to an inn, walks back up,
+ * takes off the cloak and lets herself into the lighthouse; its lamp lights. The story plays once (STORY_S), then the
+ * scene settles into a seamless ambient loop (LOOP_S). Every frame is a function of the time alone: nothing is
+ * simulated, so ?t= jumps anywhere and two runs agree.
+ *
+ * Framebuffer: 320x180 palette indices plus a layer id per pixel (for selective light), as in the garden.
+ * Layers, back to front, each moving at its own fraction of the camera (LAY.pSky ...): sky and moon, mountain,
+ * hills, then the world at 1: water, lighthouse, town, the glass bridge (a palette remap over what is behind it),
+ * people, the near railing, reflections, boats, lights. Positions are world pixels as the opening shot sees them,
+ * heights measured up from the bottom of the opening shot (the layout tool's convention).
+ *
+ * Optional URL parameters: ?t=SECONDS, &freeze=1, ?stats=1 (src_cine/99_main.js).
+ */
+// @ts-check
+// =================================================================== CINEMATIC CORE: BASE
+// Shared by the cinematic scenes (src_garden, src_bridge). Loads first: the timing constants and the pure helpers.
+// A scene's own config comes next (W, H, IY0, IY1, IH, LOOP_S, CINE_S, PAL_HEX, its palette remaps), then
+// 01_frame.js, then the scene, then 99_main.js. Everything shares one global scope.
+'use strict';
+
+const FPS = 60, DT = 1 / FPS;
+const TAU = Math.PI * 2;
+const T = 255;                                      // transparent index in sprite/layer buffers
+
+// ------------------------------------------------------------------ palette remaps
+function makeMap(pairs) {
+  const m = new Uint8Array(256);
+  for (let i = 0; i < 256; i++) m[i] = i;
+  for (let i = 0; i < pairs.length; i += 2) m[pairs[i]] = pairs[i + 1];
+  return m;
+}
+
+// ------------------------------------------------------------------ math / noise helpers
+const BAYER = new Float32Array([0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map(v => (v + 0.5) / 16));
+function bay(x, y) { return BAYER[((y & 3) << 2) | (x & 3)]; }
+// integer hash (0..65535, always a small int so calls never box a double) + tiny inlinable scaler
+function hashi(a, b) {
+  let h = Math.imul(a | 0, 0x27d4eb2d) ^ Math.imul(b | 0, 0x165667b1) ^ 0x5bd1e995;
+  h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d);
+  h = Math.imul(h ^ (h >>> 12), 0x297a2d39);
+  return (h ^ (h >>> 15)) >>> 16;
+}
+function hash(a, b) { return hashi(a, b) * 1.52587890625e-5; }   // [0,1)
+function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+function lerp(a, b, t) { return a + (b - a) * t; }
+function smooth(t) { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); }
+function smoother(t) { t = clamp(t, 0, 1); return t * t * t * (t * (t * 6 - 15) + 10); }
+function frac(v) { return v - Math.floor(v); }
+// loop-locked oscillator: k whole cycles per loop
+function osc(k, t, ph) { return Math.sin(TAU * (k * t / LOOP_S + ph)); }
+// smooth 1D value noise, periodic with period p (integer)
+function pnoise(x, p, seed) {
+  const i = Math.floor(x), f = x - i, a = hash(((i % p) + p) % p, seed), b = hash((((i + 1) % p) + p) % p, seed);
+  return lerp(a, b, f * f * (3 - 2 * f));
+}
+
+// A palette remap from a colour rule: each colour goes to the palette colour nearest fn([r, g, b]). fam[i] names
+// colour i's family ('' for none); a colour in a family only maps within it, and nothing else maps into a family,
+// so a character's colours never turn up on the scenery.
+function paletteMap(hex, fam, fn) {
+  const rgb = hex.map(h => { const v = parseInt(h, 16); return [v >> 16, (v >> 8) & 255, v & 255]; });
+  const m = new Uint8Array(256);
+  for (let i = 0; i < 256; i++) m[i] = i;
+  for (let i = 0; i < rgb.length; i++) {
+    const want = fn(rgb[i].slice());
+    let best = i, bd = Infinity;
+    for (let j = 0; j < rgb.length; j++) {
+      if (fam[j] !== fam[i]) continue;
+      const c = rgb[j], rm = (c[0] + want[0]) / 2, dr = c[0] - want[0], dg = c[1] - want[1], db = c[2] - want[2];
+      const d = (2 + rm / 256) * dr * dr + 4 * dg * dg + (2 + (255 - rm) / 256) * db * db;   // "redmean" distance
+      if (d < bd) { bd = d; best = j; }
+    }
+    m[i] = best;
+  }
+  return m;
+}
+
+// @ts-check
+// =================================================================== NIGHT BRIDGE: CONFIG
+// ------------------------------------------------------------------ screen and time
+const W = 320, H = 180, BAR = 0, IH = H, IY0 = 0, IY1 = H;      // no letterbox: the whole frame is picture
+const STORY_S = 92, LOOP_S = 24;                                 // the story once, then an ambient loop
+const CINE_S = STORY_S + LOOP_S;
+const STORY_F = STORY_S * FPS, LOOP_F = LOOP_S * FPS, CINE_F = CINE_S * FPS;
+
+// ------------------------------------------------------------------ layout
+// The layout tool's values (https://claude.ai/artifact/HWS7V8ao8GacL9atNQLFxC), same names. Paste a new "For the
+// brief" layout over these. Heights in % are of the screen height, up from the bottom of the opening shot.
+const LAY = {
+  worldW: 620, headroom: 70,
+  river: 16, leftX: -30, leftY: 22, peakX: 150, peakY: 40, rightX: 420, rightY: 24,
+  thickTop: 6, thickEnd: 30, sharp: 3, approach: 44, openings: 2, panels: 12,
+  lampEvery: 18, glowN: 6, spots: 3, trees: 7, larchEvery: 3,
+  lhDx: 10, stairRise: 10, lhH: 96,
+  mountX: 300, mountH: 64, mountW: 380, hills: 28, slope: 4, cliffs: 3,
+  moonX: 200, moonY: 78, moonR: 10,
+  shopsX: 470, shops: 4, inn: 2, camelliaX: 500,
+  shotOpen: 0, shotDoor: 300, shotTower: 20, towerUp: 40,
+  pSky: 0, pMount: 0.1, pHills: 0.3, pFore: 1
+};
+// Sizes the tool drew without people to measure against, set here to fit a 30 px woman (see the brief).
+const SIZE = {
+  treeH: 38,        // conifers in pots; larches are 0.8 of this (tool: 18)
+  lhW: 18,          // lighthouse width, so she fits through its door (tool: 10)
+  rail: 12,         // railing height above the deck
+  doorW: 10, doorH: 33,   // the lighthouse door
+  innDoorW: 16, innDoorH: 34
+};
+const pct = (v) => v / 100 * H;
+const RIVER_Y = pct(LAY.river);          // far water line (world y)
+const WATER_Y = RIVER_Y - 3;             // where piers, banks and the lighthouse meet the water: reflections mirror here
+const STREET_Y = Math.round(pct(LAY.rightY));   // the town's street, level with the bridge's right end
+const LH = H + LAY.headroom;             // world height covered by the layers
+
+// ------------------------------------------------------------------ palette
+// families keep colours apart: her hair, cloak and tunic, and skin, only ever remap among themselves
+const PAL = [
+  ['BLK', '07060a'], ['INK', '120f1c'],
+  ['SK0', '0b0916'], ['SK1', '100d1d'], ['SK2', '151126'], ['SK3', '1a1530'], ['SK4', '201a3a'], ['SK5', '261f43'], ['SK6', '2c234b'],
+  ['STAR', 'cfc8e6'], ['MOON', 'e4def4'], ['MOONS', 'b4aad6'], ['HALO', '3e3466'],
+  ['MT0', '1d1733'], ['MT1', '272043'], ['MT2', '3a3160'], ['SNOW0', '6f6898'], ['SNOW1', 'a9a3c8'],
+  ['HL0', '111a1d'], ['HL1', '172426'], ['HL2', '1f312f'], ['HL3', '2b4238'],
+  ['CL0', '35203d'], ['CL1', '4f2c4b'], ['CL2', '6b3b5a'],
+  ['W0', '05070c'], ['W1', '0b111d'], ['W2', '121b2e'], ['W3', '1c2a45'], ['W4', '34466c'],
+  ['G0', '4c5276'], ['G1', '7a82a8'], ['G2', 'b3bbd8'], ['G3', 'e8ebf8'],
+  ['AM0', '5a3820'], ['AM1', 'a8682e'], ['AM2', 'f0b464'], ['AM3', 'ffe4ae'],
+  ['PH0', '1f4a48'], ['PH1', '3f9a88'], ['PH2', '8fe3c8'], ['PH3', 'd8fff0'],
+  ['ST0', '2e2a40'], ['ST1', '4e4968'], ['ST2', '7f7a9c'], ['ST3', 'b9b4cc'],
+  ['WL0', '1a1524'], ['WL1', '251e33'], ['WL2', '332a45'], ['WL3', '45395a'],
+  ['WD0', '2a1a20'], ['WD1', '43292c'],
+  ['LF0', '16231c'], ['LF1', '22362a'], ['BL0', '8c3f58'], ['BL1', 'd77a8e'],
+  ['LA0', '7a6428'], ['LA1', 'cfae48'],
+  ['SKN0', 'e8c0a0', 'skin'], ['SKN1', 'b88466', 'skin'], ['SKN2', '7a4e42', 'skin'],
+  ['HR0', '5a2219', 'hair'], ['HR1', '93402a', 'hair'], ['HR2', 'c8714a', 'hair'],
+  ['CK0', '35101a', 'cloak'], ['CK1', '621a26', 'cloak'], ['CK2', '8f2c36', 'cloak'],
+  ['TU0', '1f4f72', 'tunic'], ['TU1', '3f86b8', 'tunic'], ['TU2', '82bde0', 'tunic'],
+  ['KA0', '4a3d32'], ['KA1', '6e5c48'], ['KB0', '343c50'], ['KB1', '505c76'], ['KH', '2a1e1a'],
+  ['PM0', '9e9584'], ['PM1', '6a6458'], ['PW0', '3a4a3e'], ['PS0', '47334a'], ['PS1', '5e5a6a'], ['GRY', '8e8a98'],
+  ['BT0', '1d1828'], ['BT1', '30293f'], ['BT2', '4a4060'], ['FUN', '5a2a2e'], ['SMK', '2c2740']
+];
+const PAL_HEX = PAL.map(p => p[1]);
+const PAL_FAM = PAL.map(p => p[2] || '');
+const NPAL = PAL.length;
+/** @type {Record<string, number>} */
+const C = {};
+PAL.forEach((p, i) => { C[p[0]] = i; });
+
+// ------------------------------------------------------------------ light (palette remaps from colour rules)
+const rgbOf = (n) => { const v = parseInt(PAL_HEX[C[n]], 16); return [v >> 16, (v >> 8) & 255, v & 255]; };
+const mix = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+const scl = (a, k, add) => [a[0] * k + add[0], a[1] * k + add[1], a[2] * k + add[2]];
+const LIT = paletteMap(PAL_HEX, PAL_FAM, c => scl(c, 1.3, [34, 18, 0]));              // warm lamp light
+const SHD = paletteMap(PAL_HEX, PAL_FAM, c => scl(c, 0.68, [0, 0, 4]));               // cool shadow
+const GLASS = paletteMap(PAL_HEX, PAL_FAM, c => scl(mix(c, rgbOf('G1'), 0.2), 1.12, [4, 4, 10]));   // seen through the bridge
+const GLASS2 = paletteMap(PAL_HEX, PAL_FAM, c => scl(mix(c, rgbOf('G1'), 0.1), 1.06, [2, 2, 6]));   // through a railing panel
+const REFL = paletteMap(PAL_HEX, PAL_FAM, c => mix(scl(c, 0.62, [0, 0, 0]), rgbOf('W2'), 0.35));     // mirrored in the river
+const BEAM = paletteMap(PAL_HEX, PAL_FAM, c => scl(mix(c, rgbOf('G2'), 0.16), 1.1, [6, 6, 10]));   // lamp beams, spotlights
+const PHOS = paletteMap(PAL_HEX, PAL_FAM, c => scl(c, 1.1, [8, 34, 26]));             // the bridge's inner glow, fireflies
+const RIM = paletteMap(PAL_HEX, PAL_FAM, c => mix(c, rgbOf('MOON'), 0.3));            // moonlight on an edge
+
+// ------------------------------------------------------------------ layer ids (light masks)
+const L = { NONE: 0, SKY: 1, MOUNT: 2, HILL: 3, WATER: 4, BANK: 5, TOWER: 6, BRIDGE: 7, TREE: 8, TOWN: 9, WIN: 10,
+            PEOPLE: 11, BOAT: 12, FLY: 13, LAMP: 14 };
+const bit = (...ids) => ids.reduce((m, i) => m | (1 << i), 0);
+const M_ALL = 0x7fffffff;
+const M_AIR = bit(L.SKY, L.MOUNT, L.HILL, L.WATER);                          // what a beam of light shows up against
+const M_SOLID = bit(L.BANK, L.TOWER, L.BRIDGE, L.TREE, L.TOWN, L.PEOPLE, L.BOAT);
+
+// @ts-check
+// =================================================================== CINEMATIC CORE: FRAMEBUFFER AND LAYERS
+// After the scene's config: needs W, H, IY0, IY1 (the image rows between any letterbox bars), IH and T.
+const fb = new Uint8Array(W * H);     // palette indices
+const lid = new Uint8Array(W * H);    // layer ids (light masks)
+
+function pset(x, y, c, id) {
+  if (x < 0 || x >= W || y < IY0 || y >= IY1) return;
+  const i = y * W + x; fb[i] = c; lid[i] = id;
+}
+function fillRect(x, y, w, h, c, id) {
+  const x0 = Math.max(0, x), x1 = Math.min(W, x + w), y0 = Math.max(IY0, y), y1 = Math.min(IY1, y + h);
+  for (let yy = y0; yy < y1; yy++) {
+    let i = yy * W + x0;
+    for (let xx = x0; xx < x1; xx++, i++) { fb[i] = c; lid[i] = id; }
+  }
+}
+// remap a single pixel if its layer id is accepted by mask (bitmask of layer ids)
+function premap(x, y, map, mask) {
+  if (x < 0 || x >= W || y < IY0 || y >= IY1) return;
+  const i = y * W + x;
+  if (mask & (1 << lid[i])) fb[i] = map[fb[i]];
+}
+
+// ------------------------------------------------------------------ layer buffers
+function makeLayer(w, h, f, defId) {
+  return { w, h, f, buf: new Uint8Array(w * h).fill(T), ids: new Uint8Array(w * h).fill(defId), defId };
+}
+function lset(ly, x, y, c, id) {
+  if (x < 0 || y < 0 || x >= ly.w || y >= ly.h) return;
+  const i = y * ly.w + x; ly.buf[i] = c; ly.ids[i] = id === undefined ? ly.defId : id;
+}
+function lget(ly, x, y) { return (x < 0 || y < 0 || x >= ly.w || y >= ly.h) ? T : ly.buf[y * ly.w + x]; }
+function lrect(ly, x, y, w, h, c, id) {
+  for (let yy = y; yy < y + h; yy++) for (let xx = x; xx < x + w; xx++) lset(ly, xx, yy, c, id);
+}
+// blit a layer at camera offset (layer y maps to image row y when offset is 0)
+function blit(ly, ox, oy) {
+  const buf = ly.buf, ids = ly.ids, lw = ly.w;
+  for (let r = 0; r < IH; r++) {
+    const sy = r + oy;
+    if (sy < 0 || sy >= ly.h) continue;
+    let si = sy * lw + ox, di = (r + IY0) * W;
+    for (let x = 0; x < W; x++, si++, di++) {
+      const sx = x + ox;
+      if (sx < 0 || sx >= lw) continue;
+      const c = buf[si];
+      if (c !== T) { fb[di] = c; lid[di] = ids[si]; }
+    }
+  }
+}
+
+// @ts-check
+// =================================================================== NIGHT BRIDGE: THE WORLD (built once)
+// ------------------------------------------------------------------ bridge geometry (the layout tool's formulas)
+const TOP_Y = pct(LAY.peakY);
+const A_L = (TOP_Y - pct(LAY.leftY)) / Math.max(1, (LAY.peakX - LAY.leftX) ** 2);
+const A_R = (TOP_Y - pct(LAY.rightY)) / Math.max(1, (LAY.rightX - LAY.peakX) ** 2);
+const ARCH_L = LAY.leftX + LAY.approach, ARCH_R = LAY.rightX - LAY.approach;
+/** world y of the walking surface at x: two half-parabolas meeting at the top, then the street */
+function deck(x) {
+  if (x >= LAY.rightX) return STREET_Y;
+  if (x <= LAY.leftX) return pct(LAY.leftY);
+  return TOP_Y - (x <= LAY.peakX ? A_L : A_R) * (x - LAY.peakX) ** 2;
+}
+/** how far the arch hangs below the deck: thin at the top, deep near the ends (hyperbola-shaped) */
+function depthAt(x) {
+  const span = x <= LAY.peakX ? LAY.peakX - ARCH_L : ARCH_R - LAY.peakX;
+  const u = Math.min(1, Math.abs(x - LAY.peakX) / Math.max(1, span)), k = LAY.sharp;
+  return LAY.thickTop + (LAY.thickEnd - LAY.thickTop) * (Math.sqrt(1 + (u * k) ** 2) - 1) / (Math.sqrt(1 + k * k) - 1);
+}
+const under = (x) => deck(x) - depthAt(x);
+const LH_X = LAY.peakX + LAY.lhDx;                         // lighthouse centre
+const LH_DOOR = Math.round(deck(LAY.peakX) + LAY.stairRise);   // world y of its doorstep
+const LH_TOP = LH_DOOR + LAY.lhH;                          // the gallery
+const STAIR_X0 = LAY.peakX - 6, STAIR_X1 = LH_X + 6;      // the far railing's gap for the stairs
+
+// ------------------------------------------------------------------ layers in world coordinates
+// A layer covers world x from x0 and world y from 0 (the bottom of the opening shot) up to its height.
+/** @param {number} x0 @param {number} w @param {number} h @param {number} f @param {number} id */
+function worldLayer(x0, w, h, f, id) { return Object.assign(makeLayer(w, h, f, id), { x0 }); }
+function wset(ly, x, y, c, id) { lset(ly, Math.round(x) - ly.x0, ly.h - 1 - Math.round(y), c, id); }
+function wget(ly, x, y) { return lget(ly, Math.round(x) - ly.x0, ly.h - 1 - Math.round(y)); }
+// screen position of a world point on a layer moving at f, for the camera at (cx, cu)
+const scrX = (x, f, cx) => Math.round(x) - Math.round(cx * f);
+const scrY = (y, f, cu) => H - 1 - Math.round(y) + Math.round(cu * f);
+function blitWorld(ly, cx, cu) { blit(ly, Math.round(cx * ly.f) - ly.x0, ly.h - H - Math.round(cu * ly.f)); }
+
+const skyL = worldLayer(0, W, H, LAY.pSky, L.SKY);
+const mountL = worldLayer(-10, W + 80, LH, LAY.pMount, L.MOUNT);
+const hillL = worldLayer(-10, W + 160, LH, LAY.pHills, L.HILL);
+const worldL = worldLayer(-40, LAY.worldW + 140, LH, 1, L.WATER);     // water, banks, lighthouse, town
+const bridgeL = worldLayer(-40, LAY.worldW + 140, LH, 1, L.BRIDGE);   // the bridge's lines, pots and trees
+const camelliaL = worldLayer(-40, LAY.worldW + 140, LH, LAY.pFore, L.TREE);
+const glassMask = new Uint8Array(worldL.w * worldL.h);                // 1 bridge body, 2 far railing panel
+function glassAt(x, y, v) {
+  const lx = Math.round(x) - worldL.x0, ly = worldL.h - 1 - Math.round(y);
+  if (lx >= 0 && ly >= 0 && lx < worldL.w && ly < worldL.h) glassMask[ly * worldL.w + lx] = v;
+}
+
+// ------------------------------------------------------------------ sky and moon (fixed on screen)
+const SKY_BANDS = [C.SK6, C.SK5, C.SK4, C.SK3, C.SK2, C.SK1, C.SK0];
+const MOON_X = LAY.moonX, MOON_Y = pct(LAY.moonY);
+function buildSky() {
+  for (let y = 0; y < H; y++) {
+    const v = Math.min(SKY_BANDS.length - 1.001, (y / H) * 1.25 * SKY_BANDS.length - 1.2);
+    for (let x = 0; x < W; x++) {
+      const i = Math.max(0, Math.floor(v)), c = bay(x, y) < v - i ? Math.min(i + 1, SKY_BANDS.length - 1) : i;
+      wset(skyL, x, y, SKY_BANDS[c], L.SKY);
+    }
+  }
+  const R = LAY.moonR;
+  for (let dy = -R - 9; dy <= R + 9; dy++) for (let dx = -R - 9; dx <= R + 9; dx++) {
+    const d = Math.hypot(dx, dy), x = MOON_X + dx, y = MOON_Y + dy;
+    if (d <= R) {
+      const crater = hash(Math.round(dx / 3) + 40, Math.round(dy / 3) + 7) < 0.22 && d < R - 1.5;
+      wset(skyL, x, y, d > R - 1 || crater ? C.MOONS : C.MOON, L.SKY);
+    } else if (bay(x, y) < 0.55 * (1 - (d - R) / 9)) wset(skyL, x, y, C.HALO, L.SKY);
+  }
+}
+
+// ------------------------------------------------------------------ mountain, hills, cliffs
+const hillBase = (x) => pct(LAY.hills) + pct(LAY.slope) * (x / LAY.worldW - 0.5);
+function mountainShape(u) {                     // 0..1 across a broad cone, flat-topped, a shoulder on the right
+  const a = Math.abs(u);
+  if (a >= 1) return 0;
+  let s = u < 0 ? 1 - Math.pow(a, 1.55) : 1 - Math.pow(a, 1.3);
+  s += 0.07 * Math.exp(-(((u - 0.42) / 0.11) ** 2));
+  return Math.min(0.96, s);
+}
+function buildMountain() {
+  const top = pct(LAY.mountH), half = LAY.mountW / 2;
+  for (let x = mountL.x0; x < mountL.x0 + mountL.w; x++) {
+    const u = (x - LAY.mountX) / half, s = mountainShape(u);
+    if (s <= 0) continue;
+    const base = hillBase(x) - 6, h = base + (top - base) * s;
+    const snowLine = top - 14 - 5 * hash(Math.floor(x / 3), 3) - 3 * Math.sin(x / 5);
+    for (let y = 0; y <= h; y++) {
+      const lit = u > 0.05 + 0.04 * Math.sin(y / 3), snow = y > snowLine;
+      let c = snow ? (lit ? C.SNOW1 : C.SNOW0) : (lit ? C.MT2 : C.MT1);
+      if (!snow && y < base + 12 && bay(x, y) < (base + 12 - y) / 12) c = C.MT0;
+      wset(mountL, x, y, c, L.MOUNT);
+    }
+  }
+}
+const hillTop = (x) => hillBase(x) + 6 * Math.sin(x / 37) + 4 * Math.sin(x / 13 + 1);
+function buildHills() {
+  for (let x = hillL.x0; x < hillL.x0 + hillL.w; x++) {
+    const h = hillTop(x);
+    for (let y = 0; y <= h; y++) {
+      const d = h - y;           // depth below the crest
+      const c = d < 1 ? C.HL3 : d < 3 + 2 * bay(x, y) ? C.HL2 : (Math.floor(x / 45) & 1) ? C.HL1 : C.HL0;
+      wset(hillL, x, y, c, L.HILL);
+    }
+  }
+  for (let k = 0; k < LAY.cliffs; k++) {            // violet-plum earth showing through
+    const cx = ((k + 0.5) / LAY.cliffs) * LAY.worldW * 0.9 + 20, h = hillTop(cx) - 1;
+    for (let r = 0; r < 12; r++) {
+      const w = 12 - r * 0.7, x0 = cx - 7 + r * 0.5;
+      for (let x = Math.round(x0); x < x0 + w; x++)
+        wset(hillL, x, h - r, r % 4 === 3 || bay(x, r) < 0.3 ? C.CL0 : x > x0 + w - 3 ? C.CL2 : C.CL1, L.HILL);
+    }
+  }
+}
+
+// ------------------------------------------------------------------ water, banks, lighthouse, town
+const SHOP_W = [46, 66, 52, 50], SHOP_H = [64, 92, 70, 58];
+/** @type {{x: number, w: number, h: number, inn: boolean}[]} */
+const SHOPS = [];
+{ let x = LAY.shopsX; for (let i = 0; i < LAY.shops; i++) { const w = SHOP_W[i % 4]; SHOPS.push({ x, w, h: SHOP_H[i % 4], inn: i + 1 === LAY.inn }); x += w + 6; } }
+const INN = SHOPS.find(s => s.inn) || SHOPS[0];
+const INN_DOOR_X = INN.x + Math.round(INN.w * 0.42), INN_WIN_X = INN_DOOR_X + 2, INN_WIN_Y = STREET_Y + 58;
+const INN_LAMP_X = INN_DOOR_X - SIZE.innDoorW / 2 - 4, INN_LAMP_Y = STREET_Y + 30;
+
+function buildWater() {
+  for (let x = worldL.x0; x < worldL.x0 + worldL.w; x++) for (let y = 0; y < RIVER_Y; y++) {
+    const v = y / RIVER_Y + 0.25 * bay(x, y);      // lighter towards the far water, where it catches the sky
+    wset(worldL, x, y, v > 0.9 ? C.W2 : v > 0.45 ? C.W1 : C.W0, L.WATER);
+  }
+}
+function buildBanks() {
+  const wall = (x0, x1) => {
+    for (let x = x0; x < x1; x++) for (let y = Math.floor(WATER_Y); y <= STREET_Y; y++) {
+      const course = Math.floor((y - WATER_Y) / 4), joint = (x + course * 5) % 11 === 0 || (y - Math.floor(WATER_Y)) % 4 === 0;
+      wset(worldL, x, y, y >= STREET_Y - 1 ? C.ST2 : joint ? C.ST0 : C.ST1, L.BANK);
+    }
+  };
+  wall(LAY.rightX - 2, worldL.x0 + worldL.w);
+  wall(worldL.x0, LAY.leftX + 2);
+}
+function buildLighthouse() {
+  for (let x = LH_X - 15; x <= LH_X + 15; x++) {                // the rock it stands on
+    const h = WATER_Y + 7 - Math.abs(x - LH_X) * 0.4 + 2 * hash(x, 9);
+    for (let y = WATER_Y - 1; y <= h; y++) wset(worldL, x, y, hash(x >> 1, y >> 1) < 0.3 ? C.ST0 : C.ST1, L.TOWER);
+  }
+  for (let y = Math.floor(WATER_Y + 4); y <= LH_TOP; y++) {     // the tower, tapering
+    const half = (SIZE.lhW / 2) * (1 - 0.22 * (y - WATER_Y) / (LH_TOP - WATER_Y)), band = Math.abs(y - (LH_DOOR + LAY.lhH * 0.55)) < 3;
+    for (let x = Math.round(LH_X - half); x <= Math.round(LH_X + half); x++) {
+      const u = (x - LH_X) / half;                                // the moon is to the right
+      let c = band ? (u > 0.1 ? C.ST2 : C.ST1) : u > 0.15 ? C.ST3 : u > -0.45 ? C.ST2 : C.ST1;
+      if (Math.abs(u) > 0.9) c = C.ST1;
+      if (y < deck(x) + 4) c = u > 0.15 ? C.ST1 : C.ST0;           // below the deck: behind the bridge, in its shadow
+      wset(worldL, x, y, c, L.TOWER);
+    }
+  }
+  for (const wy of [LH_DOOR + 46, LH_DOOR + 70]) for (let y = wy; y < wy + 5; y++) wset(worldL, LH_X + 1, y, C.WL0, L.TOWER);
+  for (let x = LH_X - 9; x <= LH_X + 9; x++) { wset(worldL, x, LH_TOP + 1, C.G2, L.TOWER); wset(worldL, x, LH_TOP + 3, C.G1, L.TOWER); }
+  for (let y = LH_TOP + 4; y <= LH_TOP + 12; y++) for (let x = LH_X - 5; x <= LH_X + 5; x++)       // the lamp room
+    wset(worldL, x, y, Math.abs(x - LH_X) === 5 || x === LH_X ? C.G0 : C.WL1, L.TOWER);
+  for (let r = 0; r < 5; r++) for (let x = LH_X - 6 + r; x <= LH_X + 6 - r; x++) wset(worldL, x, LH_TOP + 13 + r, r === 0 ? C.ST1 : C.ST0, L.TOWER);
+  wset(worldL, LH_X, LH_TOP + 18, C.G2, L.TOWER); wset(worldL, LH_X, LH_TOP + 19, C.G2, L.TOWER);
+  // the door, its arch, the lock
+  const dw = SIZE.doorW / 2;
+  for (let y = LH_DOOR; y < LH_DOOR + SIZE.doorH; y++) for (let x = LH_X - dw; x < LH_X + dw; x++) {
+    const arch = y - LH_DOOR > SIZE.doorH - 4 && Math.hypot(x + 0.5 - LH_X, (y - (LH_DOOR + SIZE.doorH - 4)) * 1.3) > dw;
+    if (!arch) wset(worldL, x, y, (x - LH_X + dw) % 3 === 0 ? C.WD0 : C.WD1, L.TOWER);
+  }
+  wset(worldL, LH_X + dw - 2, LH_DOOR + 15, C.AM1, L.TOWER);
+  // the stairs from the top of the deck, climbing away from us to the door
+  const n = Math.max(2, Math.round(LAY.stairRise / 2));
+  for (let s = 0; s <= n; s++) {
+    const t = s / n, cx = LAY.peakX + (LH_X - LAY.peakX) * t, y = lerp(deck(LAY.peakX) + 4, LH_DOOR, t), w = 12 - t * 3;
+    for (let x = Math.round(cx - w / 2); x <= Math.round(cx + w / 2); x++) { wset(worldL, x, y, C.G1, L.BRIDGE); wset(worldL, x, y - 1, C.ST1, L.BRIDGE); }
+  }
+}
+function buildTown() {
+  for (const s of SHOPS) {
+    const y0 = STREET_Y + 1;
+    for (let y = y0; y < y0 + s.h; y++) for (let x = s.x; x < s.x + s.w; x++)
+      wset(worldL, x, y, x >= s.x + s.w - 2 ? C.WL2 : x === s.x ? C.WL0 : C.WL1, L.TOWN);
+    for (let x = s.x - 2; x < s.x + s.w + 2; x++) { wset(worldL, x, y0 + s.h, C.WL3, L.TOWN); wset(worldL, x, y0 + s.h + 1, C.WL2, L.TOWN); }
+    for (let r = 0; r < 7; r++) for (let x = s.x + r; x < s.x + s.w - r; x++) wset(worldL, x, y0 + s.h + 2 + r, r ? C.BT0 : C.BT1, L.TOWN);
+    // windows: a shop window below, smaller ones above (the inn's are lit dynamically)
+    const rows = s.h > 80 ? [y0 + 36, y0 + 58] : [y0 + 36];
+    for (const wy of rows) for (let wx = s.x + 6; wx + 8 <= s.x + s.w - 4; wx += 15) {
+      if (s.inn && Math.abs(wx + 4 - INN_WIN_X) < 9 && wy === y0 + 58) continue;
+      const lit = hash(wx, wy) < 0.3;
+      for (let y = wy; y < wy + 10; y++) for (let x = wx; x < wx + 8; x++)
+        wset(worldL, x, y, x === wx + 3 ? C.WL2 : lit ? (y < wy + 3 ? C.AM1 : C.AM0) : C.WL0, L.WIN);
+    }
+    if (!s.inn) for (let y = y0; y < y0 + 26; y++) for (let x = s.x + 6; x < s.x + 18; x++) wset(worldL, x, y, x === s.x + 6 ? C.WD1 : hash(x, 3) < 0.2 ? C.WL0 : C.WL1, L.TOWN);
+    else for (let y = y0; y < y0 + 26; y++) for (let x = s.x + s.w - 16; x < s.x + s.w - 5; x++) wset(worldL, x, y, y > y0 + 12 ? C.AM0 : C.AM1, L.WIN);
+  }
+  // the inn's door, its sign and its lamp
+  const dw = SIZE.innDoorW / 2;
+  for (let y = STREET_Y + 1; y <= STREET_Y + SIZE.innDoorH; y++) for (let x = INN_DOOR_X - dw - 1; x <= INN_DOOR_X + dw; x++)
+    wset(worldL, x, y, x === INN_DOOR_X - dw - 1 || x === INN_DOOR_X + dw || y === STREET_Y + SIZE.innDoorH ? C.WL3 : x === INN_DOOR_X ? C.WD0 : C.WD1, L.TOWN);
+  for (let y = INN_WIN_Y; y < INN_WIN_Y + 12; y++) for (let x = INN_WIN_X - 5; x <= INN_WIN_X + 5; x++)
+    wset(worldL, x, y, x === INN_WIN_X - 5 || x === INN_WIN_X + 5 || y === INN_WIN_Y ? C.WL3 : C.WL0, L.WIN);
+  for (let y = INN_LAMP_Y; y < INN_LAMP_Y + 5; y++) wset(worldL, INN_LAMP_X - 2, y + 3, C.ST1, L.TOWN);
+  for (let x = INN_LAMP_X - 2; x <= INN_LAMP_X; x++) wset(worldL, x, INN_LAMP_Y + 8, C.ST1, L.TOWN);
+  for (let y = STREET_Y + 38; y < STREET_Y + 45; y++) for (let x = INN_DOOR_X - 12; x <= INN_DOOR_X + 12; x++)
+    wset(worldL, x, y, y === STREET_Y + 38 || y === STREET_Y + 44 ? C.WD0 : C.AM0, L.TOWN);
+}
+function buildCamellia() {
+  const x0 = LAY.camelliaX, g = STREET_Y + 1;
+  for (let y = g; y < g + 52; y++) { wset(camelliaL, x0, y, C.WD0, L.TREE); if (y < g + 30) wset(camelliaL, x0 + 1, y, C.WD1, L.TREE); }
+  for (let k = 0; k < 8; k++) {                                   // a few round masses of leaves, with gaps for the moon
+    const cx = x0 + (hash(k, 1) - 0.5) * 30, cy = g + 60 + hash(k, 2) * 42, r = 7 + hash(k, 3) * 7;
+    for (let dy = -r; dy <= r; dy++) for (let dx = -r * 1.3; dx <= r * 1.3; dx++) {
+      const d = Math.hypot(dx / 1.3, dy) / r;
+      if (d > 1 || hash(Math.round(cx + dx), Math.round(cy + dy) + 50) < 0.18 * d) continue;
+      const lit = dx > r * 0.3 && dy > -2;
+      const bloom = hash(Math.round(cx + dx) * 3, Math.round(cy + dy)) < 0.045;
+      wset(camelliaL, cx + dx, cy + dy, bloom ? (lit ? C.BL1 : C.BL0) : lit ? C.LF1 : C.LF0, L.TREE);
+    }
+  }
+}
+
+// ------------------------------------------------------------------ the bridge
+/** @type {{x: number, larch: boolean, h: number}[]} */
+const TREES = [];
+const LAMPS = [];        // x positions along the near railing
+const GLOWS = [];        // [x, y] inside the girders
+function buildBridge() {
+  const x0 = Math.ceil(LAY.leftX), x1 = Math.floor(LAY.rightX);
+  for (let x = x0; x <= x1; x++) {
+    const d = deck(x), inArch = x >= ARCH_L && x <= ARCH_R, u = inArch ? under(x) : WATER_Y;
+    for (let y = Math.ceil(u); y < d - 1; y++) glassAt(x, y, 1);
+    if (x < STAIR_X0 || x > STAIR_X1) for (let y = Math.round(d + 3); y < d + 3 + SIZE.rail; y++) glassAt(x, y, 2);
+    wset(bridgeL, x, d, C.G3, L.BRIDGE); wset(bridgeL, x, d - 1, C.G2, L.BRIDGE);
+    if (inArch) { wset(bridgeL, x, u, C.G1, L.BRIDGE); wset(bridgeL, x, u - 1, C.G0, L.BRIDGE); }
+    if (x < STAIR_X0 || x > STAIR_X1) {
+      wset(bridgeL, x, d + 3 + SIZE.rail, C.G1, L.BRIDGE);                         // far railing
+      if (x % 9 === 0) for (let y = d + 3; y < d + 3 + SIZE.rail; y++) wset(bridgeL, x, y, C.G0, L.BRIDGE);
+    }
+  }
+  // end spans: piers to the water, arched openings (clear glass), and the pier lines
+  for (const side of [0, 1]) {
+    const a = side ? ARCH_R : LAY.leftX, b = side ? LAY.rightX : ARCH_L;
+    for (let y = WATER_Y; y < deck(side ? a : b) - 1; y++) for (const px of [side ? a : b, (side ? a : b) + (side ? -1 : 1)]) wset(bridgeL, px, y, C.G1, L.BRIDGE);
+    for (let o = 0; o < LAY.openings; o++) {
+      const ow = (b - a) / (LAY.openings + 0.5), oc = a + (o + 0.75) * ow, r = ow * 0.32, top = deck(oc) - 7 - r;
+      for (let x = Math.round(oc - r); x <= Math.round(oc + r); x++) {
+        const yTop = top + Math.sqrt(Math.max(0, r * r - (x - oc) ** 2));
+        for (let y = WATER_Y; y <= yTop; y++) glassAt(x, y, 0);
+        wset(bridgeL, x, yTop, C.G1, L.BRIDGE);
+      }
+      for (let y = WATER_Y; y <= top; y++) { wset(bridgeL, oc - r, y, C.G0, L.BRIDGE); wset(bridgeL, oc + r, y, C.G0, L.BRIDGE); }
+    }
+  }
+  // girders: alternating diagonals between the deck and the arch
+  const gx = (i) => ARCH_L + (ARCH_R - ARCH_L) * i / LAY.panels;
+  for (let i = 0; i < LAY.panels; i++) {
+    const a = gx(i), b = gx(i + 1), up = i % 2 === 0;
+    const [xa, ya, xb, yb] = up ? [a, deck(a) - 2, b, under(b) + 1] : [a, under(a) + 1, b, deck(b) - 2];
+    const n = Math.ceil(Math.max(Math.abs(xb - xa), Math.abs(yb - ya)));
+    for (let k = 0; k <= n; k++) wset(bridgeL, xa + (xb - xa) * k / n, ya + (yb - ya) * k / n, C.G1, L.BRIDGE);
+    wset(bridgeL, a, deck(a) - 2, C.G2, L.BRIDGE);
+  }
+  for (let i = 0; i < LAY.glowN; i++) { const x = ARCH_L + (ARCH_R - ARCH_L) * (i + 0.5) / LAY.glowN; GLOWS.push([x, (deck(x) + under(x)) / 2]); }
+  for (let x = LAY.leftX + 4; x < LAY.rightX; x += LAY.lampEvery) LAMPS.push(x);
+  // trees in translucent pots along the far railing, none at the top where the stairs are
+  for (let i = 0; i < LAY.trees; i++) {
+    let x = LAY.leftX + 20 + (LAY.rightX - LAY.leftX - 40) * (i + 0.5) / LAY.trees;
+    if (x > STAIR_X0 - 8 && x < STAIR_X1 + 8) x = x < LAY.peakX ? STAIR_X0 - 8 : STAIR_X1 + 8;
+    const larch = (i + 1) % LAY.larchEvery === 0;
+    TREES.push({ x: Math.round(x), larch, h: Math.round(SIZE.treeH * (larch ? 0.8 : 1) * (0.9 + 0.2 * hash(i, 5))) });
+  }
+  for (const t of TREES) {
+    const y0 = deck(t.x) + 4;
+    for (let x = t.x - 3; x <= t.x + 3; x++) { wset(bridgeL, x, y0, C.G1, L.TREE); wset(bridgeL, x, y0 + 3, C.G2, L.TREE); }
+    for (let x = t.x - 2; x <= t.x + 2; x++) { wset(bridgeL, x, y0 + 1, C.G0, L.TREE); wset(bridgeL, x, y0 + 2, C.WD0, L.TREE); }
+    wset(bridgeL, t.x - 1, y0 + 4, C.WD1, L.TREE); wset(bridgeL, t.x, y0 + 4, C.WD1, L.TREE); wset(bridgeL, t.x + 1, y0 + 4, C.WD0, L.TREE);
+    for (let r = 0; r < t.h; r++) {
+      const v = r / t.h, w = t.larch ? 2.6 * (1 - v) + 0.6 + (r % 3 === 0 ? 0.8 : 0) : 1.9 * (1 - v * v) + 0.4;
+      for (let x = Math.round(t.x - w); x <= Math.round(t.x + w); x++) {
+        const lit = x > t.x;
+        wset(bridgeL, x, y0 + 5 + r, t.larch ? (lit && (r + x) % 3 ? C.LA1 : C.LA0) : (lit ? C.HL3 : x === t.x ? C.LF1 : C.LF0), L.TREE);
+      }
+    }
+    for (let k = 0; k < 3; k++) {                                // roots creeping down the glass
+      let x = t.x - 2 + k * 2;
+      const len = 3 + Math.round(hash(t.x, k) * 6);
+      for (let r = 0; r < len; r++) { if (hash(t.x + r, k + 9) < 0.35) x += k - 1; wset(bridgeL, x, deck(x) - 2 - r, C.WD0, L.TREE); }
+    }
+  }
+}
+
+// @ts-check
+// =================================================================== NIGHT BRIDGE: PEOPLE (procedural sprites)
+// Each figure is drawn every frame from a pose into a scratch sprite (feet at SAY, centre at SAX), then set into the
+// framebuffer with moonlight on the edges that face the moon. Sizes are the brief's: her 30 px, the children 21 and
+// 19. All five are original designs (docs/design-log/night-bridge.md).
+const SPR = 52, SAX = 26, SAY = 47;
+const spr = new Uint8Array(SPR * SPR);
+const SIDE = 0, FRONT = 1, BACK = 2;
+
+function sp(x, y, c) {
+  const sx = Math.round(x) + SAX, sy = Math.round(y) + SAY;
+  if (sx >= 0 && sy >= 0 && sx < SPR && sy < SPR) spr[sy * SPR + sx] = c;
+}
+function seg(x0, y0, x1, y1, c, w) {
+  const n = Math.max(1, Math.ceil(Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0))));
+  const flat = Math.abs(x1 - x0) > Math.abs(y1 - y0);
+  for (let i = 0; i <= n; i++) {
+    const x = x0 + (x1 - x0) * i / n, y = y0 + (y1 - y0) * i / n;
+    sp(x, y, c);
+    if (w > 1) flat ? sp(x, y + 1, c) : sp(x + 1, y, c);
+  }
+}
+// fill a polygon given as [x, y, x, y, ...] (pixel centres inside it)
+function poly(pts, c, edgeL, edgeR) {
+  let y0 = Infinity, y1 = -Infinity;
+  for (let i = 1; i < pts.length; i += 2) { y0 = Math.min(y0, pts[i]); y1 = Math.max(y1, pts[i]); }
+  for (let y = Math.ceil(y0 - 0.5); y <= Math.floor(y1 + 0.5); y++) {
+    const xs = [], yc = y;
+    for (let i = 0, n = pts.length / 2; i < n; i++) {
+      const ax = pts[i * 2], ay = pts[i * 2 + 1], bx = pts[((i + 1) % n) * 2], by = pts[((i + 1) % n) * 2 + 1];
+      if ((ay <= yc && by > yc) || (by <= yc && ay > yc)) xs.push(ax + (yc - ay) / (by - ay) * (bx - ax));
+    }
+    xs.sort((a, b) => a - b);
+    for (let k = 0; k + 1 < xs.length; k += 2) {
+      const a = Math.round(xs[k]), b = Math.round(xs[k + 1]) - 1;
+      for (let x = a; x <= b; x++) sp(x, y, x === a && edgeL !== undefined ? edgeL : x === b && edgeR !== undefined ? edgeR : c);
+    }
+  }
+}
+// a head bitmap: rows of letters, cx = the column over the body's centre; the last row is the neck
+function headBm(rows, cx, top, colours, flip) {
+  for (let r = 0; r < rows.length; r++) for (let k = 0; k < rows[r].length; k++) {
+    const ch = rows[r][k];
+    if (ch !== '.') sp(flip ? cx - (k - Math.floor(rows[r].length / 2)) : cx + (k - Math.floor(rows[r].length / 2)), top + r, colours[ch]);
+  }
+}
+
+// ------------------------------------------------------------------ the cast
+// heads face right in SIDE; letters: h/H hair light/dark, t hair tie, S/s skin, e eye, n neck, m moustache, K/k cap, b bunch
+const HER_HEADS = {
+  [SIDE]: ['..hhh..', '.hHHHh.', 'HHHHSS.', 'HHHSeSS', 'tHHSSS.', 't.HSSs.', 't..nn..'],
+  [FRONT]: ['..hhh..', '.hHHHh.', 'hHSSSHh', 'HSeSeSH', 'HSSSSSH', 'H.SsS.H', '...n...'],
+  [BACK]: ['..hhh..', '.hHHHh.', 'hHHHHHh', 'HHHHHHH', 'HHHHHHH', 'H.HtH.H', '...n...']
+};
+const KIDA_HEADS = {
+  [SIDE]: ['.KKKK..', 'KKKKKk.', 'hhSSS..', 'hSSeSS.', '.hSSs..', '..n....'],
+  [FRONT]: ['.KKKKK.', 'KKKKKKK', '.hSSSh.', '.SeSeS.', '..SSS..', '...n...'],
+  [BACK]: ['.KKKKK.', 'KKKKKKK', '.hhhhh.', '.hhhhh.', '..hhh..', '...n...']
+};
+const KIDB_HEADS = {
+  [SIDE]: ['.hhh...', 'hhhhh..', 'bhhSSS.', 'bhSSeS.', '.hSSs..', '..n....'],
+  [FRONT]: ['..hhh..', '.hhhhh.', 'bhSSShb', 'b.SeS.b', '..SSS..', '...n...'],
+  [BACK]: ['..hhh..', '.hhhhh.', 'bhhhhhb', 'bhhhhhb', '..hhh..', '...n...']
+};
+const KEEP_HEADS = {
+  [FRONT]: ['..SSS..', '.gSSSg.', 'gSeSeSg', 'gSSSSSg', '.SmmmS.', '..SSS..', '...n...'],
+  [BACK]: ['..SSS..', '.gSSSg.', 'ggggggg', 'ggggggg', '.ggggg.', '..SSS..', '...n...']
+};
+const KEEP2_HEADS = {
+  [FRONT]: ['..ggg..', '.gGGGg.', 'gGSSSGg', '.SeSeS.', '.SSSSS.', '..SsS..', '...n...'],
+  [BACK]: ['..ggg..', '.ggGgg.', 'gGGGGGg', 'gGGGGGg', '.gGGGg.', '..ggg..', '...n...']
+};
+KEEP_HEADS[SIDE] = KEEP_HEADS[FRONT]; KEEP2_HEADS[SIDE] = KEEP2_HEADS[FRONT];
+
+const CAST = {
+  her: { h: 30, leg: 14, sh: 2.6, hip: 2, ua: 6, fa: 5, stride: 4.4, heads: HER_HEADS,
+         col: { h: C.HR2, H: C.HR1, t: C.HR0, S: C.SKN0, s: C.SKN1, e: C.INK, n: C.SKN1 } },
+  kidA: { h: 21, leg: 9, sh: 2, hip: 1.6, ua: 4, fa: 3.5, stride: 3.4, heads: KIDA_HEADS,
+          col: { K: C.KA0, k: C.KH, h: C.KH, S: C.SKN0, s: C.SKN1, e: C.INK, n: C.SKN1 } },
+  kidB: { h: 19, leg: 8, sh: 1.8, hip: 1.5, ua: 3.5, fa: 3, stride: 3.1, heads: KIDB_HEADS,
+          col: { h: C.KA0, b: C.KA1, S: C.SKN0, s: C.SKN1, e: C.INK, n: C.SKN1 } },
+  keeper: { h: 31, leg: 14, sh: 3, hip: 2.6, ua: 6, fa: 5, stride: 4, heads: KEEP_HEADS,
+            col: { g: C.GRY, S: C.SKN1, e: C.INK, m: C.GRY, n: C.SKN2 } },
+  keeper2: { h: 28, leg: 12, sh: 2.6, hip: 2.6, ua: 5, fa: 4.5, stride: 3.6, heads: KEEP2_HEADS,
+             col: { g: C.GRY, G: C.PM1, S: C.SKN0, s: C.SKN1, e: C.INK, n: C.SKN1 } }
+};
+
+/** a pose: everything the drawing needs, filled in by the story each frame */
+function newPose(who) {
+  return { who, on: 0, x: 0, y: 0, z: 0, view: SIDE, face: 1, look: 0, lookUp: 0, lean: 0, phase: 0, amp: 0, hop: 0,
+           armF: [0, 0.3], armB: [0, 0.3], cloak: 0, rail: 0, key: 0, clip0: -1e9, clip1: 1e9, dim: 0 };
+}
+
+// ------------------------------------------------------------------ drawing one figure into spr (facing right)
+function legPts(d, p, front) {
+  const ph = p.phase + (front ? 0 : 0.5), s = Math.sin(TAU * ph), c = Math.cos(TAU * ph);
+  const amp = p.amp, lift = amp > 0.05 ? Math.max(0, c) * (1 + 0.8 * Math.max(0, amp - 1)) * 1.6 * Math.min(1, amp) : 0;
+  const fx = s * d.stride * amp, hx = front ? 0.5 : -0.5, hy = -d.leg;
+  const kx = (hx + fx) / 2 + 0.6 + lift * 0.7, ky = hy / 2 - lift * 0.6;
+  return [hx, hy, kx, ky, fx, -lift];
+}
+function drawLeg(d, p, front, col, shoe, w) {
+  const [hx, hy, kx, ky, fx, fy] = legPts(d, p, front);
+  seg(hx, hy, kx, ky, col, w); seg(kx, ky, fx, fy, col, w);
+  sp(fx, fy, shoe); sp(fx + 1, fy, shoe); if (w > 1) sp(fx + 2, fy, shoe);
+}
+function armPts(d, p, front, sy) {
+  const [a, e] = front ? p.armF : p.armB, sx = p.lean * 0.9 + (front ? 0.5 : -0.5);
+  const ex = sx + d.ua * Math.sin(a), ey = sy + d.ua * Math.cos(a);
+  return [sx, sy, ex, ey, ex + d.fa * Math.sin(a + e), ey + d.fa * Math.cos(a + e)];
+}
+function drawArm(d, p, front, sy, sleeve, skin) {
+  const [sx, syy, ex, ey, hx, hy] = armPts(d, p, front, sy);
+  seg(sx, syy, ex, ey, sleeve, 1); seg(ex, ey, hx, hy, sleeve, 1); sp(hx, hy, skin);
+  return [hx, hy, ex, ey];
+}
+// front and back views: arms hang from the shoulders and swing out by angle a (0 = down), elbow e
+function drawArmFB(d, p, right, sy, sleeve, skin) {
+  const [a, e] = right ? p.armF : p.armB, sgn = right ? 1 : -1, sx = sgn * (d.sh + 0.5);
+  let ex = sx + sgn * d.ua * Math.sin(a), ey = sy + d.ua * Math.cos(a), hx = ex + sgn * d.fa * Math.sin(a - e), hy = ey + d.fa * Math.cos(a - e);
+  if (p.rail) { ex = sx; ey = sy + d.ua * 0.6; hx = sgn * 1; hy = -(SIZE.rail - 1) + p.z * 0; }
+  seg(sx, sy, ex, ey, sleeve, 1); seg(ex, ey, hx, hy, sleeve, 1); sp(hx, hy, skin);
+}
+
+function drawFigure(p) {
+  spr.fill(T);
+  const d = CAST[p.who], view = p.view, bob = p.amp > 0.2 && Math.cos(TAU * p.phase * 2) > 0.4 ? -1 : 0;
+  const lift = -p.hop + bob, dip = p.rail ? Math.round(p.lean) : 0;     // leaning over a railing lowers the head
+  const nRows = d.heads[view].length, headTop = -d.h + lift + dip, sy = headTop + nRows - 1, hy = -d.leg;
+  const her = p.who === 'her', cl = p.cloak, cloakOn = her && cl < 0.3, slide = her ? clamp((cl - 0.3) / 0.35, 0, 1) : 0;
+  const gather = her ? clamp((cl - 0.65) / 0.2, 0, 1) : 0;
+  // garment colours: [main, shadow, light]
+  const top = her ? (cloakOn ? [C.CK1, C.CK0, C.CK2] : [C.TU1, C.TU0, C.TU2])
+            : p.who === 'kidA' ? [C.KA1, C.KA0, C.KA1] : p.who === 'kidB' ? [C.KB1, C.KB0, C.KB1]
+            : p.who === 'keeper' ? [C.PW0, C.BT1, C.PW0] : [C.PS0, C.BT1, C.PS1];
+  const legC = her ? C.TU0 : p.who === 'kidA' ? C.BT1 : p.who === 'kidB' ? C.BT2 : p.who === 'keeper' ? C.BT1 : C.PS1;
+  const shoe = C.INK, skin = d.col.S, legW = her || p.who.startsWith('keep') ? 2 : 1;
+
+  if (view === SIDE) {
+    const lean = p.lean, hipY = hy + lift;
+    // back arm and leg, in shadow
+    drawArm(d, p, false, sy + 1, top[1], C.SKN1);
+    drawLeg(d, p, false, legC === C.TU0 ? C.TU0 : C.BT0, shoe, legW);
+    drawLeg(d, p, true, legC, shoe, legW);
+    if (her && !cloakOn) {                                          // loose trousers: a flare at the back of each ankle
+      for (const fr of [false, true]) { const q = legPts(d, p, fr); sp(q[4] - 1, q[5] - 1, C.TU0); sp(q[4] - 1, q[5] - 2, C.TU0); }
+    }
+    // torso and garment
+    const sB = lean - d.sh * 0.7, sF = lean + d.sh * 0.9;
+    if (p.who === 'keeper2') poly([sB, sy, sF, sy, 2.6, -1, -3, -1], top[0], top[1], top[2]);
+    else if (p.who === 'kidB') poly([sB, sy, sF, sy, 2.2, hipY + 4, -2.4, hipY + 4], top[0], top[1], top[2]);
+    else poly([sB, sy, sF, sy, d.hip * 0.9, hipY + (her ? 0 : 1), -d.hip, hipY + (her ? 0 : 1)], top[0], top[1], top[2]);
+    if (p.who === 'keeper') poly([0.5, hipY - 2, d.hip + 0.8, hipY - 2, d.hip + 1.2, hipY + 7, 0.5, hipY + 7], C.PM0, C.PM1);
+    if (her) {
+      const fF = legPts(d, p, true)[4], fB = legPts(d, p, false)[4], sway = 0.6 * Math.sin(TAU * p.phase * 2) * p.amp;
+      if (!cloakOn) poly([sB, sy, sF, sy, 2.4 + lean * 0.3, hy + 5 + lift, -2.6, hy + 5 + lift], C.TU1, C.TU0, C.TU2);
+      if (gather < 1) {
+        // the cloak, fitted to the waist and flaring to the ankle; while it comes off its top slides down the back
+        const tY = lerp(sy - 0.5, hipY + 2, slide), flare = 1 + slide * 1.5, g = gather;
+        const hand = armPts(d, p, true, sy + 1);
+        const pts = [lerp(sB - 0.2, -2, slide), tY, lerp(sF + 0.3, 1.5, slide), tY, 1.9, hipY + 1,
+                     Math.max(fF, 2) + 0.6 + sway, -1, Math.min(fB, -2.4) - 1 - sway - flare + 1, -1, -2.3 - slide, hipY + 1];
+        for (let i = 0; i < pts.length; i += 2) { pts[i] = lerp(pts[i], hand[4] + (i % 4 ? 1 : -1), g); pts[i + 1] = lerp(pts[i + 1], hand[5] + (i < 4 ? 0 : 6), g); }
+        poly(pts, C.CK1, C.CK0, C.CK2);
+        if (cloakOn) sp(sF, sy + 1, C.CK2);                           // the clasp at the collar
+      }
+    }
+    // head and hair
+    const look = p.look ? -1 : 1, hx = Math.round(lean * 1.1);
+    headBm(d.heads[SIDE], hx, headTop, d.col, look < 0);
+    if (her) {                                                       // the low tail swings behind her
+      const sw = p.amp > 0.05 ? Math.round(-0.7 * p.amp) : 0, bx = hx - 3 * look;
+      sp(bx + sw * look, headTop + 7, C.HR0); sp(bx + sw * look, headTop + 8, C.HR0);
+    }
+    if (p.lookUp) sp(hx + 1 * look, headTop + 3, d.col.S);              // eye lifts: the eye row shows skin
+    // front arm last (over the body), with the cloak bundle if she carries it
+    const hand = drawArm(d, p, true, sy + 1, top[0], skin);
+    if (her && gather >= 1) {
+      const bx = (hand[0] + hand[2]) / 2, by = (hand[1] + hand[3]) / 2;
+      poly([bx - 2, by, bx + 2, by, bx + 2.5, by + 7, bx - 1.5, by + 7], C.CK1, C.CK0, C.CK2);
+      sp(bx, by + 3, C.CK0);
+    }
+    if (p.key) sp(hand[0] + 1, hand[1] - 1, C.AM3);
+  } else {
+    // FRONT and BACK: symmetric bodies, legs together, arms from the shoulders
+    const fb = view === FRONT, w2 = d.sh + 0.5;
+    for (const s of [-1, 1]) { seg(s * 1.2, hy + lift, s * 1.2, -1, legC, legW > 1 ? 1 : 1); sp(s * 1.2, 0, shoe); if (legW > 1) seg(s * 0.2, hy + lift, s * 0.2, -1, legC, 1); }
+    let hem = hy + lift + (p.who === 'kidB' ? 4 : p.who === 'kidA' ? 1 : 0);
+    if (her) hem = cloakOn ? -1 : hy + 5 + lift;
+    if (p.who === 'keeper2') hem = -1;
+    poly([-w2, sy + dip * 0, w2 + 1, sy, d.hip + 1.4 + (hem > -3 ? 1.5 : 0), hem, -d.hip - 0.4 - (hem > -3 ? 1.5 : 0), hem], top[0], fb ? top[0] : top[1], top[2]);
+    if (p.who === 'keeper' && fb) poly([-2, hy + lift - 2, 3, hy + lift - 2, 3.5, hy + lift + 8, -2.5, hy + lift + 8], C.PM0, C.PM1, C.PM0);
+    if (p.who === 'keeper2') poly([-w2 - 0.5, sy, w2 + 1.5, sy, w2 + 1.5, sy + 6, -w2 - 0.5, sy + 6], C.PS0, C.BT1, C.PS0);
+    drawArmFB(d, p, true, sy + 1, top[fb ? 0 : 1], skin);
+    drawArmFB(d, p, false, sy + 1, top[1], skin);
+    headBm(d.heads[view], 0, headTop, d.col, false);
+    if (her && view === BACK) { sp(0, headTop + 7, C.HR0); sp(0, headTop + 8, C.HR0); }
+    if (her && view === BACK && p.key) sp(d.sh + 1, sy + 3, C.AM3);
+  }
+}
+
+// set the drawn figure into the framebuffer at screen (sx, feet row sy), lit by the moon from moonSx
+function placeFigure(p, sx, sy, moonSx) {
+  const flip = p.view === SIDE && p.face < 0, toward = moonSx >= sx ? 1 : -1;
+  for (let y = 0; y < SPR; y++) for (let x = 0; x < SPR; x++) {
+    let c = spr[y * SPR + x];
+    if (c === T) continue;
+    const dx = flip ? SAX - x : x - SAX, X = sx + dx, Y = sy + (y - SAY);
+    if (X < p.clip0 || X > p.clip1) continue;
+    // moonlight on the edge that faces the moon, above the knees
+    const nx = flip ? x - toward : x + toward;
+    if (y < SAY - 6 && (nx < 0 || nx >= SPR || spr[y * SPR + nx] === T)) c = RIM[c];
+    if (p.dim) c = SHD[c];
+    pset(X, Y, c, L.PEOPLE);
+  }
+}
+
+// @ts-check
+// =================================================================== NIGHT BRIDGE: THE STORY (data, then evaluation)
+// Every track is a function of the time t in seconds. Past STORY_S the story is over: everyone is indoors, the lamp
+// is lit and the camera holds; only the ambient things (water, boats, lights, fireflies) keep moving.
+const WALK = 1, HURRY = 1.3, RUN = 1.6;
+const DOOR = INN_DOOR_X;
+// moves: [t0, t1, x0, x1, gait]   views: [t, view, face]   z: [t, depth] (0 near railing .. 4 far railing, linear
+// between keys)   acts: [t0, t1, gesture]   on: [t0, t1] visible
+const STORY = {
+  kidA: {
+    on: [[5.0, 44.9]],
+    moves: [[5.0, 10.2, -14, 232, RUN], [12.0, 12.8, 232, 254, WALK], [27.0, 38.4, 254, 530, WALK], [44.0, 44.9, 530, DOOR, WALK]],
+    views: [[0, SIDE, 1], [12.9, BACK, 1], [16.3, SIDE, -1], [17.5, BACK, 1], [19.7, FRONT, 1], [25.1, SIDE, -1], [26.7, SIDE, 1], [44.5, BACK, 1]],
+    z: [[0, 1.5], [12.8, 1.5], [12.9, 4], [19.6, 4], [20.2, 0], [25.0, 0], [26.8, 1.5]],
+    acts: [[10.4, 12.0, 'lookBack'], [12.9, 16.3, 'rail'], [16.3, 17.5, 'callOver'], [17.5, 19.6, 'rail'], [20.2, 25.0, 'rail'],
+           [25.1, 26.7, 'still'], [27.0, 38.6, 'held'], [38.6, 44.0, 'still']]
+  },
+  kidB: {
+    on: [[5.4, 45.9]],
+    moves: [[5.4, 10.4, -14, 214, RUN], [17.0, 17.6, 214, 240, RUN], [27.4, 38.8, 240, 512, WALK], [44.6, 45.9, 512, DOOR, WALK]],
+    views: [[0, SIDE, 1], [17.7, BACK, 1], [19.7, FRONT, 1], [25.0, SIDE, -1], [27.2, SIDE, 1], [45.5, BACK, 1]],
+    z: [[0, 2.5], [17.6, 2.5], [17.7, 4], [19.6, 4], [20.2, 0], [25.0, 0], [27.2, 3]],
+    acts: [[10.4, 12.0, 'lookBack'], [12.0, 16.6, 'firefly'], [16.6, 17.0, 'lookUp'], [17.7, 19.6, 'rail'], [20.2, 25.0, 'rail'],
+           [25.0, 27.2, 'still'], [38.8, 44.6, 'still']]
+  },
+  her: {
+    on: [[21.0, 46.8], [52.0, 84.2]],
+    moves: [[21.0, 25.6, -18, 247, HURRY], [27.0, 38.4, 247, 523, WALK], [46.0, 46.8, 523, DOOR, WALK], [52.0, 52.9, DOOR, 522, WALK],
+            [58.0, 72.0, 522, LAY.peakX, WALK], [81.0, 82.6, LAY.peakX, LH_X, WALK]],
+    views: [[0, SIDE, 1], [46.4, BACK, 1], [52.0, FRONT, 1], [52.4, SIDE, -1], [53.2, SIDE, 1], [57.6, SIDE, -1], [72.0, FRONT, 1],
+            [74.3, SIDE, 1], [78.6, SIDE, -1], [79.6, SIDE, 1], [80.8, BACK, 1]],
+    z: [[0, 2], [25.6, 1.5], [72.0, 2], [80.8, 2], [81.0, 4]],
+    acts: [[25.2, 26.0, 'catch'], [26.0, 27.0, 'beckon'], [27.0, 38.6, 'hold'], [39.0, 44.0, 'talk'], [44.0, 46.0, 'still'],
+           [53.4, 55.2, 'lookUp'], [55.3, 56.2, 'lookBack'], [72.2, 74.3, 'still'], [74.5, 75.55, 'throat'], [75.55, 77.5, 'slip'],
+           [77.5, 84.2, 'carry'], [82.6, 83.7, 'unlock']],
+    cloak: [74.5, 78.0]
+  },
+  keeper: {
+    on: [[38.7, 47.2], [51.6, 53.4]],
+    moves: [[38.7, 39.3, DOOR + 4, DOOR + 1, WALK]],
+    views: [[0, FRONT, 1], [46.9, BACK, 1], [51.6, FRONT, 1], [53.0, BACK, 1]],
+    z: [[0, 4]],
+    acts: [[39.3, 42.4, 'still'], [42.4, 44.6, 'welcome'], [44.6, 46.9, 'still'], [51.6, 53.0, 'still']]
+  },
+  keeper2: {
+    on: [[38.9, 45.9]],
+    moves: [[38.9, 40.2, DOOR, DOOR + SIZE.innDoorW / 2 + 6, WALK], [45.3, 45.9, DOOR + SIZE.innDoorW / 2 + 6, DOOR, WALK]],
+    views: [[0, SIDE, 1], [40.2, FRONT, 1], [45.2, BACK, 1]],
+    z: [[0, 3]],
+    acts: [[40.2, 43.6, 'still'], [43.6, 45.0, 'beckonKids']]
+  }
+};
+const CAM_KEYS = [[0, LAY.shotOpen, 0], [27.0, LAY.shotOpen, 0], [38.0, LAY.shotDoor, 0], [58.6, LAY.shotDoor, 0], [71.0, LAY.shotTower, 0],
+                  [86.8, LAY.shotTower, 0], [90.5, LAY.shotTower, LAY.towerUp]];
+const INN_DOOR = [38.4, 38.9, 53.0, 53.5];          // opens, open, closes, shut
+const TOWER_DOOR = [83.6, 83.9, 84.4, 84.8];
+const INN_WINDOW_T = 47.8, LAMP_T = 86.0;
+// boats: [t, x, scale]; scale 0.5 is the bridge's distance, bigger is nearer (and lower on the water)
+const FISHER = [[11.0, 236, 0.22], [19.8, 234, 0.5], [23.0, 250, 0.8], [27.0, 300, 1.0], [34.0, 420, 1.2], [42.0, 600, 1.35], [48.0, 740, 1.4]];
+const STEAMER = [[60.0, 108, 0.2], [70.5, 106, 0.5], [76.0, 80, 0.72], [84.0, -10, 0.9], [90.0, -140, 0.95]];
+/** @type {[number, string][]} */
+const CUES = [[18.6, 'bell'], [38.4, 'door'], [53.0, 'doorShut'], [73.5, 'horn'], [82.9, 'key'], [83.3, 'key'], [83.6, 'door'],
+              [84.4, 'doorShut'], [86.0, 'lamp']];
+
+// ------------------------------------------------------------------ evaluation
+const storyT = (t) => Math.min(t, STORY_S);
+function keyed(keys, t) {                          // linear between [t, v] keys, held at the ends
+  if (t <= keys[0][0]) return keys[0][1];
+  for (let i = 1; i < keys.length; i++) if (t < keys[i][0]) {
+    const a = keys[i - 1], b = keys[i]; return lerp(a[1], b[1], (t - a[0]) / (b[0] - a[0]));
+  }
+  return keys[keys.length - 1][1];
+}
+function stepped(list, t) { let v = list[0]; for (const e of list) if (t >= e[0]) v = e; return v; }
+function within(spans, t) { for (const s of spans) if (t >= s[0] && t < s[1]) return true; return false; }
+function ramp(t, a, b) { return clamp((t - a) / (b - a), 0, 1); }
+
+// where a mover is, how far it has walked (for the leg phase), and how hard it is striding
+function moveAt(moves, t, stride) {
+  let x = moves[0][2], dist = 0, amp = 0, gait = WALK;
+  for (const [t0, t1, x0, x1, g] of moves) {
+    if (t < t0) break;
+    const u = clamp((t - t0) / (t1 - t0), 0, 1), a = 0.15, vmax = 1 / (1 - a);
+    const e = u < a ? 0.5 * vmax * u * u / a : u < 1 - a ? vmax * (u - a / 2) : 1 - 0.5 * vmax * (1 - u) ** 2 / a;
+    x = lerp(x0, x1, e); gait = g;
+    dist += Math.abs(x - x0);
+    amp = u >= 1 ? 0 : g * (u < a ? u / a : u > 1 - a ? (1 - u) / a : 1);
+  }
+  return { x, phase: frac(dist / (4 * stride * gait)), amp: Math.min(amp, gait) };
+}
+
+const POSES = { kidA: newPose('kidA'), kidB: newPose('kidB'), her: newPose('her'), keeper: newPose('keeper'), keeper2: newPose('keeper2') };
+const ORDER = Object.keys(POSES);
+function evalPerson(who, t) {
+  const s = STORY[who], d = CAST[who], p = POSES[who];
+  t = storyT(t);
+  p.on = within(s.on, t) ? 1 : 0;
+  const m = moveAt(s.moves, t, d.stride);
+  const v = stepped(s.views, t);
+  p.x = m.x; p.phase = m.phase; p.amp = m.amp; p.view = v[1]; p.face = v[2]; p.z = keyed(s.z, t);
+  p.look = 0; p.lookUp = 0; p.lean = p.amp > 1.2 ? 1.5 : 0; p.hop = 0; p.rail = 0; p.key = 0; p.dim = 0;
+  p.cloak = s.cloak ? ramp(t, s.cloak[0], s.cloak[1]) : 0;
+  // arms swing with the legs while walking (opposite to the leg on the same side)
+  const sw = 0.55 * p.amp;
+  p.armF[0] = -Math.sin(TAU * p.phase) * sw; p.armF[1] = 0.2 + 0.25 * p.amp;
+  p.armB[0] = Math.sin(TAU * p.phase) * sw; p.armB[1] = 0.2 + 0.25 * p.amp;
+  if (p.view !== SIDE) { p.armF[0] = 0.12; p.armF[1] = 0.1; p.armB[0] = 0.12; p.armB[1] = 0.1; }
+  for (const [t0, t1, g] of s.acts) if (t >= t0 && t < t1) gesture(p, g, (t - t0) / (t1 - t0), t - t0);
+  // feet: on the deck (nearer is lower), on the street, or on the lighthouse stairs
+  if (who === 'her' && t >= 81.0) p.y = lerp(deck(LAY.peakX) + 4, LH_DOOR, ramp(p.x, LAY.peakX, LH_X));
+  else p.y = p.x >= LAY.rightX ? STREET_Y + 1 : deck(p.x) + 1 + Math.round(p.z * 0.6);
+  if (who === 'keeper' || (p.x > DOOR - SIZE.innDoorW / 2 && p.x < DOOR + SIZE.innDoorW / 2 && p.view === BACK)) p.dim = 1;
+  return p;
+}
+function gesture(p, g, u, el) {
+  const A = p.armF, B = p.armB;
+  switch (g) {
+    case 'lookBack': p.look = 1; break;
+    case 'lookUp': p.lookUp = 1; break;
+    case 'still': A[0] = 0.08; A[1] = 0.15; B[0] = 0.05; B[1] = 0.15; break;
+    case 'rail': p.rail = 1; p.lean = 2; break;
+    case 'callOver': A[0] = 2.3 + 0.35 * Math.sin(TAU * el * 3); A[1] = 0.4; break;                 // waving the other over
+    case 'firefly': {                                                                                // reach, clap, look, again
+      const k = u * 2 % 1, clap = k > 0.32 && k < 0.42;
+      A[0] = clap ? 1.55 : k < 0.32 ? 2.5 : 1.0; A[1] = clap ? 0 : k < 0.32 ? 0.2 : 0.9;
+      B[0] = A[0] - 0.1; B[1] = A[1];
+      p.hop = clap ? 2 : 0; p.lookUp = k < 0.42 ? 1 : 0;
+      break;
+    }
+    case 'catch': A[0] = lerp(0.3, 1.3, smooth(u * 2)); A[1] = 0.1; p.lean = 1; break;
+    case 'beckon': A[0] = 1.0; A[1] = 0.1; p.look = 1; B[0] = -1.2 - 0.35 * Math.sin(TAU * el * 3); B[1] = -0.5; break;
+    case 'hold': A[0] = 0.95; A[1] = 0.15; break;
+    case 'held': B[0] = -0.85; B[1] = 0; break;
+    case 'talk': A[0] = 0.6 + 0.25 * Math.sin(TAU * el * 0.9); A[1] = 1.0 + 0.45 * Math.sin(TAU * el * 1.4); break;
+    case 'welcome': A[0] = 0.9 * smooth(u * 4) * (1 - smooth((u - 0.85) * 6.6)); A[1] = 0.3; break;
+    case 'beckonKids': B[0] = 0.8; B[1] = 0.8 + 0.6 * Math.sin(TAU * el * 2.5); break;
+    case 'throat': A[0] = 0.4 * smooth(u * 3); A[1] = 2.6 * smooth(u * 3); break;
+    case 'slip': A[0] = lerp(0.4, -0.3, smooth(u * 2)); A[1] = lerp(2.6, 0.6, smooth(u * 2)); B[0] = -0.4; B[1] = 0.3; p.lean = 0; break;
+    case 'carry': A[0] = 0.2; A[1] = 1.45; break;
+    case 'unlock': A[0] = 0.9; A[1] = 1.1; p.key = 1; break;
+  }
+}
+
+// ------------------------------------------------------------------ the camera, doors, windows, lamp
+const camOut = { x: 0, up: 0 };
+function cameraAt(t) {
+  t = storyT(t);
+  let k = 0; while (k < CAM_KEYS.length - 2 && t >= CAM_KEYS[k + 1][0]) k++;
+  const A = CAM_KEYS[k], B = CAM_KEYS[k + 1], w = smoother((t - A[0]) / (B[0] - A[0]));
+  camOut.x = lerp(A[1], B[1], w); camOut.up = lerp(A[2], B[2], w);
+  return camOut;
+}
+const doorOpen = (D, t) => { t = storyT(t); return t < D[2] ? ramp(t, D[0], D[1]) : 1 - ramp(t, D[2], D[3]); };
+// the children's window: a few flickers, then lit
+function innWindow(t) {
+  t = storyT(t);
+  if (t < INN_WINDOW_T) return 0;
+  const e = t - INN_WINDOW_T;
+  return e > 1.0 ? 1 : [1, 0, 1, 1, 0, 1, 0, 1, 1, 1][Math.floor(e * 10)];
+}
+function lampOn(t) {
+  t = storyT(t);
+  if (t < LAMP_T) return 0;
+  const e = t - LAMP_T;
+  return e > 0.8 ? 1 : [1, 0, 0, 1, 0, 1, 1, 1][Math.floor(e * 10)];
+}
+const boatAt = (keys, t) => keys.length && t >= keys[0][0] && t <= keys[keys.length - 1][0]
+  ? { x: keyed(keys.map(k => [k[0], k[1]]), t), s: keyed(keys.map(k => [k[0], k[2]]), t) } : null;
+
+// @ts-check
+// =================================================================== NIGHT BRIDGE: WATER AND BOATS
+// The river runs towards us under the bridge, so a boat's distance shows as its size: scale 0.5 is the bridge's
+// distance, smaller is upstream behind it, bigger is nearer (and lower on the water).
+const boatWaterY = (s) => RIVER_Y - 3 * (s / 0.5);
+
+// mirror everything above the waterline into the river, broken by ripples
+function drawReflections(t, fl, cu) {
+  const rowW = scrY(WATER_Y, 1, cu);
+  const ph = TAU * (6 * t / LOOP_S);
+  for (let r = Math.max(0, rowW + 1); r < H; r++) {
+    const d = r - rowW, src = rowW - d;
+    if (src < 0) continue;
+    const dx = Math.round((0.3 + d * 0.05) * Math.sin(d * 0.9 + ph)), streak = d % 3 === 1;
+    for (let x = 0; x < W; x++) {
+      const sx = clamp(x + dx, 0, W - 1), c = fb[src * W + sx], i = r * W + x;
+      let o = REFL[c];
+      if (streak && hash((x + Math.round(8 * Math.sin(ph + r))) >> 3, r) < 0.12) o = REFL[o];   // darker ripple troughs
+      fb[i] = o; lid[i] = L.WATER;
+    }
+  }
+  // the moon's glitter: a broken column under it, re-rolled ten times a second
+  const mx = MOON_X, g = Math.floor(fl / 6);
+  for (let r = Math.max(0, rowW + 2); r < H; r++) {
+    const d = r - rowW, half = 1 + d * 0.12;
+    for (let x = Math.round(mx - half); x <= Math.round(mx + half); x++)
+      if (x >= 0 && x < W && hash(x * 7 + r, g) < 0.18) { fb[r * W + x] = hash(x, r + g) < 0.4 ? C.MOONS : C.W4; lid[r * W + x] = L.WATER; }
+  }
+}
+
+// a fishing boat side-on: hull, cabin, mast and lantern, and a dark reflection
+function drawFisher(x, s, t, cx, cu, bob) {
+  const wy = boatWaterY(s), sx = scrX(x, 1, cx), sy = scrY(wy, 1, cu) + bob, L0 = Math.max(6, Math.round(26 * s));
+  const hh = Math.max(2, Math.round(4 * s));
+  for (let k = 0; k < hh; k++) {                                     // reflection first, then the boat over it
+    for (let i = 0; i < L0 - k * 2; i++) if ((i + k) % 3) pset(sx - (L0 >> 1) + k + i, sy + 1 + k, C.W3, L.WATER);
+  }
+  for (let k = 0; k < hh; k++) for (let i = k; i < L0 - k; i++) pset(sx - (L0 >> 1) + i, sy - k, k === hh - 1 ? C.BT2 : C.BT1, L.BOAT);
+  const cw = Math.max(2, Math.round(7 * s)), ch = Math.max(2, Math.round(5 * s)), cx0 = sx + Math.round(L0 * 0.12);
+  for (let k = 0; k < ch; k++) for (let i = 0; i < cw; i++) pset(cx0 + i, sy - hh - k, i === cw - 1 ? C.BT2 : C.BT1, L.BOAT);
+  if (s > 0.6) pset(cx0 + 1, sy - hh - ch + 1, C.AM1, L.BOAT);      // a lit cabin window
+  const mh = Math.round(15 * s), mx = sx - Math.round(L0 * 0.12);
+  for (let k = 0; k < mh; k++) pset(mx, sy - hh - k, C.BT2, L.BOAT);
+  const sway = Math.round(osc(8, t, 0.3) * s);                        // the lantern swings a little
+  pset(mx + sway, sy - hh - mh + 2, C.AM3, L.LAMP); pset(mx + sway, sy - hh - mh + 3, C.AM2, L.LAMP);
+  lightPool(mx + sway, sy - hh - mh + 3, 4 + 4 * s, 3 + 3 * s, 0.6, bit(L.BOAT, L.WATER), LIT);
+  for (let i = 0; i < Math.round(3 * s); i++) pset(sx + (L0 >> 1) + i, sy, C.W4, L.WATER);   // a little foam at the bow
+}
+// the steamer: long hull, deckhouse with lit portholes, a funnel trailing smoke
+function drawSteamer(x, s, t, cx, cu) {
+  const wy = boatWaterY(s), sx = scrX(x, 1, cx), sy = scrY(wy, 1, cu), L0 = Math.round(70 * s), hh = Math.max(2, Math.round(8 * s));
+  for (let k = 0; k < hh; k++) for (let i = 0; i < L0 - k * 3; i++) if ((i + k) % 4) pset(sx - (L0 >> 1) + k + i, sy + 1 + k, C.W3, L.WATER);
+  for (let k = 0; k < hh; k++) {
+    const inset = Math.round((hh - k) * 0.6);
+    for (let i = inset; i < L0 - Math.round(k * 0.4); i++) pset(sx - (L0 >> 1) + i, sy - k, k === hh - 1 ? C.BT2 : k === 0 ? C.BT0 : C.BT1, L.BOAT);
+  }
+  const dw = Math.round(32 * s), dh = Math.max(2, Math.round(8 * s)), dx0 = sx - Math.round(L0 * 0.2);
+  for (let k = 0; k < dh; k++) for (let i = 0; i < dw; i++) pset(dx0 + i, sy - hh - k, k === dh - 1 ? C.BT2 : C.BT1, L.BOAT);
+  for (let i = 2; i < dw - 1; i += Math.max(2, Math.round(5 * s))) pset(dx0 + i, sy - hh - (dh >> 1), C.AM2, L.LAMP);
+  const fw = Math.max(2, Math.round(5 * s)), fh = Math.round(14 * s), fx = dx0 + Math.round(dw * 0.55);
+  for (let k = 0; k < fh; k++) for (let i = 0; i < fw; i++) pset(fx + i, sy - hh - dh - k, k > fh - 3 ? C.BT0 : i === fw - 1 ? C.FUN : C.WD1, L.BOAT);
+  const mh = Math.round(22 * s); for (let k = 0; k < mh; k++) pset(dx0 - 3, sy - hh - k, C.BT2, L.BOAT);
+  pset(dx0 - 3, sy - hh - mh, C.AM3, L.LAMP);
+  // smoke: a puff every 0.6 s, rising and drifting back, growing, thinning out (dithered)
+  const top = sy - hh - dh - fh;
+  for (let k = 0; k < 9; k++) {
+    const age = (t / 0.6 % 1 + k) * 0.6, px = fx + fw / 2 + age * 9 * s + age * age * 2, py = top - age * 7 * s - 1, r = 1 + age * 2.2 * s;
+    for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+      const X = Math.round(px + dx), Y = Math.round(py + dy);
+      if (dx * dx + dy * dy <= r * r && bay(X, Y) < 0.75 - age * 0.13) pset(X, Y, C.SMK, L.BOAT);
+    }
+  }
+}
+
+// @ts-check
+// =================================================================== NIGHT BRIDGE: LIGHTS
+// Light is a palette remap applied through a dithered falloff, only to the layers in mask.
+function lightPool(cx, cy, rx, ry, strength, mask, map) {
+  for (let y = Math.floor(cy - ry); y <= Math.ceil(cy + ry); y++) for (let x = Math.floor(cx - rx); x <= Math.ceil(cx + rx); x++) {
+    const d = ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2;
+    if (d < 1 && bay(x, y) < strength * (1 - d)) premap(x, y, map, mask);
+  }
+}
+
+// ------------------------------------------------------------------ stars (fixed on screen, twinkling)
+const STARS = [];
+function buildStars() {
+  for (let i = 0; STARS.length < 70 && i < 400; i++) {
+    const x = Math.floor(hash(i, 11) * W), y = Math.floor(hash(i, 12) * hash(i, 13) * 120);
+    if (Math.hypot(x - MOON_X, (H - 1 - y) - MOON_Y) < LAY.moonR + 14) continue;
+    STARS.push([x, y, 3 + (i % 7), hash(i, 14)]);
+  }
+}
+function drawStars(t) {
+  for (const [x, y, k, ph] of STARS) if (lid[y * W + x] === L.SKY) {
+    const v = osc(k, t, ph);
+    if (v > -0.3) pset(x, y, v > 0.6 ? C.STAR : C.SNOW0, L.SKY);
+  }
+}
+
+// ------------------------------------------------------------------ the bridge's own light
+function drawGlows(t, cx, cu) {
+  for (let i = 0; i < GLOWS.length; i++) {
+    const [x, y] = GLOWS[i], sx = scrX(x, 1, cx), sy = scrY(y, 1, cu), br = 0.75 + 0.2 * osc(2, t, i / GLOWS.length);
+    lightPool(sx, sy, 9, 6, br * 0.8, M_ALL & ~bit(L.PEOPLE), PHOS);
+    pset(sx, sy, C.PH3, L.LAMP); pset(sx + 1, sy, C.PH2, L.LAMP); pset(sx, sy + 1, C.PH2, L.LAMP); pset(sx - 1, sy, C.PH1, L.LAMP);
+  }
+}
+const SPOTS = [[ARCH_L + 6, -0.25, 0.1], [ARCH_R - 6, 0.3, 0.6], [LH_X + 16, -0.5, 0.35]];   // [x, lean, sway phase]
+function drawSpots(t, cx, cu) {
+  for (let i = 0; i < Math.min(LAY.spots, SPOTS.length); i++) {
+    const [x0, lean, ph] = SPOTS[i], tx = x0 + lean * 90 + 10 * osc(1, t, ph);
+    const sx0 = scrX(x0, 1, cx), sy0 = scrY(WATER_Y + 1, 1, cu), sx1 = scrX(tx, 1, cx), sy1 = scrY(under(tx), 1, cu);
+    for (let y = Math.min(sy0, sy1); y <= Math.max(sy0, sy1); y++) {
+      const v = (y - sy0) / (sy1 - sy0 || 1), cxl = lerp(sx0, sx1, v), half = 1 + v * 11;
+      for (let x = Math.round(cxl - half); x <= Math.round(cxl + half); x++) {
+        const edge = 1 - Math.abs(x - cxl) / half;
+        if (bay(x, y) < 0.42 * edge * (0.4 + 0.6 * v)) premap(x, y, BEAM, M_AIR);
+      }
+    }
+    pset(sx0, sy0, C.AM3, L.LAMP); pset(sx0 + 1, sy0, C.AM2, L.LAMP);
+  }
+}
+// the near railing, over the people: a glass panel, its top rail, posts and lamps
+function drawNearRailing(cx, cu) {
+  for (let x = 0; x < W; x++) {
+    const wx = x + Math.round(cx);
+    if (wx < LAY.leftX || wx > LAY.rightX) continue;
+    const d = deck(wx), top = scrY(d + 1 + SIZE.rail, 1, cu), bot = scrY(d + 1, 1, cu);
+    for (let y = top + 1; y <= bot; y++) premap(x, y, GLASS2, M_ALL);
+    pset(x, top, C.G2, L.BRIDGE);
+    if (wx % 9 === 4) for (let y = top + 1; y <= bot; y++) pset(x, y, C.G0, L.BRIDGE);
+  }
+  for (const lx of LAMPS) {
+    const sx = scrX(lx, 1, cx);
+    if (sx < -8 || sx > W + 8) continue;
+    const top = scrY(deck(lx) + 1 + SIZE.rail, 1, cu);
+    pset(sx, top - 1, C.G1, L.LAMP); pset(sx, top - 2, C.AM2, L.LAMP); pset(sx, top - 3, C.AM3, L.LAMP); pset(sx + 1, top - 2, C.AM1, L.LAMP);
+    lightPool(sx, top - 2, 7, 6, 0.75, bit(L.PEOPLE, L.TREE, L.BRIDGE), LIT);
+  }
+}
+
+// ------------------------------------------------------------------ the lighthouse lamp and its beam
+function drawLighthouseLamp(t, cx, cu) {
+  const on = lampOn(t), sx = scrX(LH_X, 1, cx), sy = scrY(LH_TOP + 8, 1, cu);
+  if (!on) return;
+  for (let y = sy - 3; y <= sy + 4; y++) for (let x = sx - 4; x <= sx + 4; x++) if (x !== sx - 4 && x !== sx + 4) pset(x, y, Math.abs(x - sx) + Math.abs(y - sy) < 3 ? C.AM3 : C.AM2, L.LAMP);
+  lightPool(sx, sy, 14, 11, 0.8, M_AIR, BEAM);
+  // the beam turns three times a loop; seen from the side it is longest when it points along the river bank
+  const fade = ramp(t, LAMP_T + 0.6, LAMP_T + 2.0), a = TAU * (3 * t / LOOP_S), c = Math.cos(a), toward = Math.sin(a);
+  if (fade <= 0) return;
+  const len = 260 * Math.abs(c), dir = c >= 0 ? 1 : -1;
+  for (let k = 3; k < len; k++) {
+    const x = sx + dir * k, half = 1.5 + k * 0.09, v = 1 - k / len;
+    for (let y = Math.round(sy - half); y <= Math.round(sy + half); y++)
+      if (bay(x, y) < fade * (0.35 + 0.6 * v) * (1 - Math.abs(y - sy) / (half + 1))) premap(x, y, BEAM, M_AIR);
+  }
+  if (toward > 0.8) lightPool(sx, sy, 6 + 30 * (toward - 0.8), 5 + 22 * (toward - 0.8), fade * 0.9, M_ALL, BEAM);   // it sweeps past us
+}
+function drawTowerDoor(t, cx, cu) {
+  const o = doorOpen(TOWER_DOOR, t);
+  if (o <= 0) return;
+  const sx = scrX(LH_X, 1, cx), y0 = scrY(LH_DOOR, 1, cu), dw = SIZE.doorW / 2, w = Math.round(SIZE.doorW * o);
+  for (let y = y0 - SIZE.doorH + 4; y <= y0; y++) for (let x = Math.round(sx - dw); x < Math.round(sx - dw) + w; x++) pset(x, y, x === Math.round(sx - dw) + w - 1 ? C.WD1 : C.BLK, L.TOWER);
+}
+
+// ------------------------------------------------------------------ the inn
+function drawInn(t, cx, cu) {
+  const o = doorOpen(INN_DOOR, t), dx = scrX(INN_DOOR_X, 1, cx), y0 = scrY(STREET_Y + 1, 1, cu), dw = SIZE.innDoorW / 2;
+  if (o > 0) {                                     // the open door: warm light inside, the leaf folded back
+    const w = Math.round((SIZE.innDoorW) * o);
+    for (let y = y0 - SIZE.innDoorH + 1; y <= y0; y++) for (let x = Math.round(dx - dw); x < Math.round(dx - dw) + w; x++)
+      pset(x, y, x < Math.round(dx - dw) + 2 ? C.WD1 : bay(x, y) < (y - y0 + SIZE.innDoorH) / SIZE.innDoorH ? C.AM1 : C.AM0, L.WIN);
+    lightPool(dx, y0 + 2, 16 * o + 4, 6, 0.7 * o, bit(L.BANK, L.PEOPLE, L.TOWN), LIT);
+  }
+  const win = innWindow(t), wx = scrX(INN_WIN_X, 1, cx), wy = scrY(INN_WIN_Y, 1, cu);
+  if (win) {
+    for (let y = wy - 10; y <= wy - 1; y++) for (let x = wx - 4; x <= wx + 4; x++) pset(x, y, x === wx || y === wy - 6 ? C.AM1 : y < wy - 7 ? C.AM3 : C.AM2, L.WIN);
+    lightPool(wx, wy - 5, 13, 11, 0.55, bit(L.TOWN), LIT);
+  }
+  const lx = scrX(INN_LAMP_X, 1, cx), ly = scrY(INN_LAMP_Y + 6, 1, cu);   // the lamp that marks the inn
+  pset(lx, ly, C.AM3, L.LAMP); pset(lx, ly + 1, C.AM2, L.LAMP); pset(lx - 1, ly + 1, C.AM1, L.LAMP); pset(lx + 1, ly + 1, C.AM1, L.LAMP); pset(lx, ly + 2, C.AM1, L.LAMP);
+  lightPool(lx, ly + 2, 24, 18, 0.62, bit(L.TOWN, L.BANK, L.PEOPLE, L.TREE), LIT);
+}
+
+// ------------------------------------------------------------------ fireflies
+// [x, height above the deck, sway x, sway y, cycles x, cycles y, blink cycles, phase]; all whole cycles per loop
+const FLIES = [[214, 22, 8, 4, 2, 3, 9, 0.1], [60, 16, 10, 5, 1, 2, 7, 0.4], [98, 26, 7, 6, 3, 2, 11, 0.7], [170, 30, 9, 4, 2, 1, 8, 0.2],
+               [280, 18, 12, 5, 1, 3, 10, 0.9], [330, 24, 8, 6, 2, 2, 6, 0.55], [20, 30, 9, 5, 3, 1, 12, 0.35], [130, 12, 6, 3, 1, 2, 9, 0.8]];
+function fireflyPos(i, t) {
+  const [x, h, ax, ay, kx, ky, , ph] = FLIES[i], fx = x + ax * osc(kx, t, ph), fy = deck(x) + h + ay * osc(ky, t, ph + 0.3);
+  if (i !== 0) return [fx, fy];
+  // the one the younger child tries to catch: it hangs just out of reach, then gets away upwards
+  const st = storyT(t), w = smooth(ramp(st, 11.0, 11.6)) * (1 - smooth(ramp(st, 16.2, 17.4)));
+  const kx0 = 214 + 6 + 2 * Math.sin(st * 5.1), ky0 = deck(214) + 1 + 20 + 2 * Math.sin(st * 3.7) + Math.max(0, st - 15.3) * 9;
+  return [lerp(fx, kx0, w), lerp(fy, ky0, w)];
+}
+function drawFireflies(t, cx, cu) {
+  for (let i = 0; i < FLIES.length; i++) {
+    const [x, y] = fireflyPos(i, t), lit = osc(FLIES[i][6], t, FLIES[i][7]);
+    if (lit < 0.1 && !(i === 0 && t > 11 && t < 17.4)) continue;
+    const sx = scrX(x, 1, cx), sy = scrY(y, 1, cu);
+    lightPool(sx, sy, 3, 3, 0.7, M_ALL, PHOS);
+    pset(sx, sy, lit > 0.6 ? C.PH3 : C.PH2, L.FLY);
+  }
+}
+
+// ------------------------------------------------------------------ vignette (dithered cool shadow in the corners)
+const vig = new Uint8Array(W * H);
+function buildVignette() {
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const dx = (x - 159.5) / 160, dy = (y - 89.5) / 90, c = (dx * dx + dy * dy) * 0.5 + dx * dx * dy * dy * 1.5;
+    vig[y * W + x] = bay(x, y) < smooth((c - 0.45) / 0.7) * 0.9 ? 1 : 0;
+  }
+}
+
+// @ts-check
+// =================================================================== NIGHT BRIDGE: SOUND
+// Generated with Web Audio, nothing recorded. Browsers only allow sound after a click or a key, so the scene starts
+// silent with a hint; the first click or key starts the river, M mutes. Cues fire as the time passes them, so a seek
+// or the loop point plays nothing it skipped.
+/** @type {AudioContext | null} */
+let actx = null;
+let snd = null, sndMuted = false, sndLastT = -1;
+function soundStart() {
+  if (actx) return;
+  const AC = window.AudioContext || /** @type {any} */ (window).webkitAudioContext;
+  if (!AC) return;
+  const ac = new AC();
+  actx = ac;
+  const noise = ac.createBuffer(1, ac.sampleRate * 2, ac.sampleRate), nd = noise.getChannelData(0);
+  for (let i = 0; i < nd.length; i++) nd[i] = hash(i, 77) * 2 - 1;
+  const master = ac.createGain(); master.gain.value = 0.8; master.connect(ac.destination);
+  const loopNoise = (freq, type, q) => {
+    const s = ac.createBufferSource(); s.buffer = noise; s.loop = true;
+    const f = ac.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = q;
+    const g = ac.createGain(); g.gain.value = 0; s.connect(f); f.connect(g); s.start(); return g;
+  };
+  const river = loopNoise(380, 'lowpass', 0.4); river.gain.value = 0.05; river.connect(master);
+  // the fishing boat's engine: a low tone, chopped into thumps
+  const putPan = ac.createStereoPanner(); putPan.connect(master);
+  const put = ac.createGain(); put.gain.value = 0; put.connect(putPan);
+  const thump = ac.createOscillator(); thump.frequency.value = 62; const chop = ac.createGain(); chop.gain.value = 0;
+  const lfo = ac.createOscillator(); lfo.type = 'square'; lfo.frequency.value = 6.5; lfo.connect(chop.gain);
+  thump.connect(chop); chop.connect(put); thump.start(); lfo.start();
+  // the steamer: a low rumble
+  const rumPan = ac.createStereoPanner(); rumPan.connect(master);
+  const rum = loopNoise(110, 'lowpass', 1.2); rum.connect(rumPan);
+  snd = { master, put, putPan, rum, rumPan, noise };
+  const hint = document.getElementById('hint'); if (hint) hint.style.opacity = '0';
+}
+function soundCue(name) {
+  if (!actx || !snd) return;
+  const ac = actx, t0 = ac.currentTime, out = snd.master;
+  const env = (node, peak, a, d) => { const g = ac.createGain(); g.gain.setValueAtTime(0, t0); g.gain.linearRampToValueAtTime(peak, t0 + a);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + a + d); node.connect(g); g.connect(out); return g; };
+  const tone = (f, type, peak, a, d) => { const o = ac.createOscillator(); o.type = type; o.frequency.value = f; env(o, peak, a, d); o.start(t0); o.stop(t0 + a + d + 0.05); return o; };
+  const burst = (f, q, peak, d) => { const s = ac.createBufferSource(); s.buffer = snd.noise; const bf = ac.createBiquadFilter(); bf.type = 'bandpass';
+    bf.frequency.value = f; bf.Q.value = q; s.connect(bf); env(bf, peak, 0.005, d); s.start(t0); s.stop(t0 + d + 0.05); };
+  if (name === 'bell') { tone(1318, 'sine', 0.12, 0.004, 1.6); tone(2093, 'sine', 0.05, 0.004, 0.9); }
+  else if (name === 'door') { burst(650, 2, 0.12, 0.35); tone(95, 'sine', 0.15, 0.01, 0.2); }
+  else if (name === 'doorShut') { tone(80, 'sine', 0.25, 0.005, 0.18); burst(300, 1.5, 0.1, 0.12); }
+  else if (name === 'key') burst(4200, 6, 0.08, 0.04);
+  else if (name === 'lamp') { tone(55, 'sine', 0.2, 0.05, 0.5); burst(900, 0.8, 0.05, 0.4); }
+  else if (name === 'horn') {
+    for (const f of [110, 147]) {
+      const o = ac.createOscillator(); o.type = 'sawtooth'; o.frequency.value = f;
+      const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 520; o.connect(lp);
+      const g = ac.createGain(); g.gain.setValueAtTime(0, t0); g.gain.linearRampToValueAtTime(0.06, t0 + 0.25);
+      g.gain.setValueAtTime(0.06, t0 + 1.6); g.gain.linearRampToValueAtTime(0, t0 + 2.2); lp.connect(g); g.connect(out); o.start(t0); o.stop(t0 + 2.3);
+    }
+  }
+}
+function soundTick(t, cx) {
+  if (!actx || !snd) return;
+  const now = actx.currentTime, set = (p, v) => p.setTargetAtTime(v, now, 0.15);
+  set(snd.master.gain, sndMuted ? 0 : 0.8);
+  const st = storyT(t), b = boatAt(FISHER, st), s2 = boatAt(STEAMER, st);
+  set(snd.put.gain, b ? 0.05 * Math.min(1, b.s * 1.4) : 0);
+  if (b) set(snd.putPan.pan, clamp((b.x - cx - W / 2) / W, -1, 1));
+  set(snd.rum.gain, s2 ? 0.12 * s2.s : 0);
+  if (s2) set(snd.rumPan.pan, clamp((s2.x - cx - W / 2) / W, -1, 1));
+  if (t > sndLastT && t - sndLastT < 0.5) for (const [ct, name] of CUES) if (ct > sndLastT && ct <= t) soundCue(name);
+  sndLastT = t;
+}
+if (typeof window !== 'undefined' && window.addEventListener) {
+  window.addEventListener('pointerdown', () => soundStart());
+  window.addEventListener('keydown', (e) => { if (actx && (e.key === 'm' || e.key === 'M')) sndMuted = !sndMuted; soundStart(); });
+}
+
+// @ts-check
+// =================================================================== NIGHT BRIDGE: BUILD, TIME AND RENDER
+let simFrame = 0;
+
+// built once by init() in src_cine/99_main.js
+function sceneBuild() {
+  buildSky(); buildMountain(); buildHills(); buildWater(); buildBanks(); buildLighthouse(); buildTown(); buildCamellia(); buildBridge();
+  buildStars(); buildVignette();
+}
+function loopReset() { /* nothing is simulated: every frame is a function of the time */ }
+function update(f) { soundTick(f / FPS, cameraAt(f / FPS).x); }
+// after the story the scene loops: from the end of the timeline back to STORY_F, not to the start
+function step() {
+  simFrame++;
+  if (simFrame >= CINE_F) simFrame = STORY_F;
+  update(simFrame);
+}
+// a frame index for things re-rolled by hash (sparkles), wrapped like the clock, so the loop point matches
+const loopFrame = (f) => f < STORY_F ? f : STORY_F + (f - STORY_F) % LOOP_F;
+
+const drawn = [];
+function render(f) {
+  const t = f / FPS, fl = loopFrame(f), cam = cameraAt(t), cx = cam.x, cu = cam.up, rcx = Math.round(cx);
+  // far to near: sky and stars, mountain, hills, the world, the beam
+  blitWorld(skyL, cx, cu); drawStars(t);
+  blitWorld(mountL, cx, cu); blitWorld(hillL, cx, cu);
+  blitWorld(worldL, cx, cu);
+  drawLighthouseLamp(t, cx, cu);
+  // boats upstream of the bridge are seen through it
+  const st = storyT(t), fisher = boatAt(FISHER, st), steamer = boatAt(STEAMER, st);
+  if (fisher && fisher.s < 0.5) drawFisher(fisher.x, fisher.s, t, cx, cu, 0);
+  if (steamer && steamer.s < 0.5) drawSteamer(steamer.x, steamer.s, t, cx, cu);
+  // the glass: everything behind the bridge's body shows through it, tinted and brighter
+  const ox = rcx - worldL.x0, oy = worldL.h - H - Math.round(cu);
+  for (let r = 0; r < H; r++) {
+    const ly = r + oy; if (ly < 0 || ly >= worldL.h) continue;
+    for (let x = 0; x < W; x++) {
+      const lx = x + ox; if (lx < 0 || lx >= worldL.w) continue;
+      const m = glassMask[ly * worldL.w + lx];
+      if (m) fb[r * W + x] = (m === 1 ? GLASS : GLASS2)[fb[r * W + x]];
+    }
+  }
+  blitWorld(bridgeL, cx, cu);
+  drawSpots(t, cx, cu); drawGlows(t, cx, cu);
+  blitWorld(camelliaL, cx, cu);
+  drawInn(t, cx, cu); drawTowerDoor(t, cx, cu);
+  // people, far ones first
+  drawn.length = 0;
+  for (const who of ORDER) { const p = evalPerson(who, t); if (p.on) drawn.push(p); }
+  drawn.sort((a, b) => b.z - a.z || a.x - b.x);
+  const moonSx = scrX(MOON_X, LAY.pSky, cx);
+  for (const p of drawn) { drawFigure(p); placeFigure(p, scrX(p.x, 1, cx), scrY(p.y, 1, cu), moonSx); }
+  drawNearRailing(cx, cu);
+  drawReflections(t, fl, cu);
+  // boats on our side of the bridge, the one moored near the town, then the small lights
+  drawFisher(LAY.rightX - 40 + 3 * osc(1, t, 0), 1.5, t, cx, cu, osc(4, t, 0.2) > 0.5 ? 1 : 0);
+  if (fisher && fisher.s >= 0.5) drawFisher(fisher.x, fisher.s, t, cx, cu, 0);
+  if (steamer && steamer.s >= 0.5) drawSteamer(steamer.x, steamer.s, t, cx, cu);
+  drawFireflies(t, cx, cu);
+  for (let i = 0; i < W * H; i++) if (vig[i]) fb[i] = SHD[fb[i]];
+}
+
+// @ts-check
+// =================================================================== CINEMATIC CORE: DISPLAY AND MAIN LOOP
+// Loads last. The scene provides sceneBuild(), loopReset(), update(f), step(), render(f), simFrame and CINE_S.
+// step() advances simFrame by one and wraps it where the scene's loop starts again.
+const screenCv = /** @type {HTMLCanvasElement} */ (document.getElementById('screen'));
+const sctx = screenCv.getContext('2d', { alpha: false });
+const offCv = document.createElement('canvas');
+offCv.width = W; offCv.height = H;
+const octx = offCv.getContext('2d');
+const img = octx.createImageData(W, H);
+const out32 = new Uint32Array(img.data.buffer);
+const PAL32 = new Uint32Array(256);
+for (let i = 0; i < NPAL; i++) {
+  const v = parseInt(PAL_HEX[i], 16);
+  PAL32[i] = (0xff << 24 | (v & 0xff) << 16 | (v >> 8 & 0xff) << 8 | (v >> 16 & 0xff)) >>> 0;
+}
+let scale = 1, offX = 0, offY = 0;
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  const bw = Math.floor(window.innerWidth * dpr), bh = Math.floor(window.innerHeight * dpr);
+  screenCv.width = bw; screenCv.height = bh;
+  scale = Math.max(1, Math.floor(Math.min(bw / W, bh / H)));
+  offX = Math.floor((bw - W * scale) / 2); offY = Math.floor((bh - H * scale) / 2);
+  sctx.imageSmoothingEnabled = false;
+  sctx.fillStyle = '#000'; sctx.fillRect(0, 0, bw, bh);
+}
+function present() {
+  for (let i = 0; i < W * H; i++) out32[i] = PAL32[fb[i]];
+  octx.putImageData(img, 0, 0);
+  sctx.imageSmoothingEnabled = false;
+  sctx.drawImage(offCv, 0, 0, W, H, offX, offY, W * scale, H * scale);
+}
+
+const params = new URLSearchParams(location.search);
+const FREEZE = params.get('freeze') === '1';
+// mutable doubles live in a typed array so per-frame stores never box a heap number
+const clk = new Float64Array(5);            // 0 accumulator, 1 last timestamp, 2 stat sum, 3 stat max, 4 stat count
+clk[1] = -1;
+// perf probe for verification (?stats=1 writes the mean frame cost into the title)
+const STATS = params.get('stats') === '1';
+function frameLoop(now) {
+  if (clk[1] < 0) clk[1] = now;
+  let dt = (now - clk[1]) / 1000; clk[1] = now;
+  if (dt > 0.25) dt = 0.25;
+  const c0 = STATS ? performance.now() : 0;
+  if (!FREEZE) { clk[0] += dt; while (clk[0] >= DT) { step(); clk[0] -= DT; } }
+  render(simFrame); present();
+  if (STATS) {
+    const c = performance.now() - c0; clk[4]++; clk[2] += c; if (c > clk[3] && clk[4] > 60) clk[3] = c;
+    if ((clk[4] % 120) === 0) document.title = 'avg ' + (clk[2] / clk[4]).toFixed(2) + 'ms max ' + clk[3].toFixed(2) + 'ms f' + simFrame;
+  }
+  requestAnimationFrame(frameLoop);
+}
+function init() {
+  sceneBuild();
+  loopReset();
+  const seek = parseFloat(params.get('t') || '0');
+  const target = Math.floor(clamp(isNaN(seek) ? 0 : seek, 0, CINE_S - DT) * FPS);
+  simFrame = 0; update(0);
+  while (simFrame < target) step();
+  resize();
+  window.addEventListener('resize', resize);
+  requestAnimationFrame(frameLoop);
+}
+init();
+
+</script>
+</body>
+</html>

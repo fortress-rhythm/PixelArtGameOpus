@@ -8,7 +8,7 @@
     "build": "node tools/build.js",
     "watch": "node tools/build.js --watch",
     "palette": "node tools/palette.js",
-    "typecheck": "tsc -p src/jsconfig.json && tsc -p src_test/jsconfig.json && tsc -p src_garden/jsconfig.json",
+    "typecheck": "tsc -p src/jsconfig.json && tsc -p src_test/jsconfig.json && tsc -p src_garden/jsconfig.json && tsc -p src_bridge/jsconfig.json",
     "check": "node tools/story_check.js",
     "test:unit": "node --test \"tests/unit/*.test.js\" \"vscode-hourglass/test/*.test.js\"",
     "test:city": "node tools/play.js routeA && node tools/play.js routeB && node tools/kb.js && node tools/run.js tests/city_exits.json && node tools/run.js tests/city_entry_probe.json",

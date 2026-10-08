@@ -1,7 +1,7 @@
 // Builds the single-file games by concatenating their sources. Plain Node, so it runs the same on Windows,
 // macOS and Linux (the old build_*.sh scripts needed a POSIX shell).
 //   node tools/build.js            build everything
-//   node tools/build.js city       one target: city | test | garden | editor
+//   node tools/build.js city       one target: city | test | garden | bridge | editor
 //   node tools/build.js --watch    rebuild whatever a saved source file belongs to
 const fs = require('fs'), path = require('path');
 const ROOT = path.join(__dirname, '..');
@@ -24,6 +24,7 @@ const TARGETS = {
   test:   () => ({ out: 'hourglass_testlevel.html', head: 'src_test/t00_head.html',
                    files: SHARED.map(f => 'src/' + f + '.js').concat(jsIn('src_test')), nl: true, dirs: ['src', 'src_test'] }),
   garden: () => ({ out: 'ravenshore_garden.html', head: 'src_garden/00_head.html', files: cine('src_garden'), nl: false, dirs: ['src_garden', 'src_cine'] }),
+  bridge: () => ({ out: 'night_bridge.html', head: 'src_bridge/00_head.html', files: cine('src_bridge'), nl: true, dirs: ['src_bridge', 'src_cine'] }),
   // the character editor draws with the game's own code
   editor: () => ({ out: 'character_editor.html', head: 'tools/character_editor/head.html',
                    files: ['src/01_core.js', 'src/03_iso.js', 'src/04_people.js', 'src/13_portraits.js', 'tools/art_core.js', 'tools/character_editor/editor.js'], nl: true,

@@ -1,6 +1,6 @@
 {
   // Node scripts: the build, the checkers, the test runners and the unit tests. The game sources have their own
-  // jsconfig.json in src/, src_test/ and src_garden/ (which includes the shared src_cine/).
+  // jsconfig.json in src/, src_test/, src_garden/ and src_bridge/ (the last two include the shared src_cine/).
   "compilerOptions": { "target": "es2022", "module": "commonjs", "checkJs": false, "noEmit": true },
   "include": ["tools/**/*.js", "tests/**/*.js"]
 }

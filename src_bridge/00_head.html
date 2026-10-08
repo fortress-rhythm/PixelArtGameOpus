@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Night Bridge</title>
+<style>
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; }
+  canvas#screen { display: block; position: fixed; left: 0; top: 0; width: 100vw; height: 100vh;
+                  image-rendering: crisp-edges; image-rendering: pixelated; background: #000; }
+  #hint { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); color: #a49cb8; font: 13px system-ui, sans-serif;
+          letter-spacing: .04em; opacity: .85; transition: opacity 1.2s; pointer-events: none; }
+</style>
+</head>
+<body>
+<canvas id="screen"></canvas>
+<div id="hint">click or press a key for sound</div>
+<script>
+/*
+ * NIGHT BRIDGE - a cinematic scene. Vanilla JS + Canvas 2D, no external assets. Brief: docs/briefs/night-bridge.md.
+ *
+ * A woman in a red cloak catches two children on a glass bridge at night, takes them to an inn, walks back up,
+ * takes off the cloak and lets herself into the lighthouse; its lamp lights. The story plays once (STORY_S), then the
+ * scene settles into a seamless ambient loop (LOOP_S). Every frame is a function of the time alone: nothing is
+ * simulated, so ?t= jumps anywhere and two runs agree.
+ *
+ * Framebuffer: 320x180 palette indices plus a layer id per pixel (for selective light), as in the garden.
+ * Layers, back to front, each moving at its own fraction of the camera (LAY.pSky ...): sky and moon, mountain,
+ * hills, then the world at 1: water, lighthouse, town, the glass bridge (a palette remap over what is behind it),
+ * people, the near railing, reflections, boats, lights. Positions are world pixels as the opening shot sees them,
+ * heights measured up from the bottom of the opening shot (the layout tool's convention).
+ *
+ * Optional URL parameters: ?t=SECONDS, &freeze=1, ?stats=1 (src_cine/99_main.js).
+ */

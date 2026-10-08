@@ -40,3 +40,24 @@ function pnoise(x, p, seed) {
   const i = Math.floor(x), f = x - i, a = hash(((i % p) + p) % p, seed), b = hash((((i + 1) % p) + p) % p, seed);
   return lerp(a, b, f * f * (3 - 2 * f));
 }
+
+// A palette remap from a colour rule: each colour goes to the palette colour nearest fn([r, g, b]). fam[i] names
+// colour i's family ('' for none); a colour in a family only maps within it, and nothing else maps into a family,
+// so a character's colours never turn up on the scenery.
+function paletteMap(hex, fam, fn) {
+  const rgb = hex.map(h => { const v = parseInt(h, 16); return [v >> 16, (v >> 8) & 255, v & 255]; });
+  const m = new Uint8Array(256);
+  for (let i = 0; i < 256; i++) m[i] = i;
+  for (let i = 0; i < rgb.length; i++) {
+    const want = fn(rgb[i].slice());
+    let best = i, bd = Infinity;
+    for (let j = 0; j < rgb.length; j++) {
+      if (fam[j] !== fam[i]) continue;
+      const c = rgb[j], rm = (c[0] + want[0]) / 2, dr = c[0] - want[0], dg = c[1] - want[1], db = c[2] - want[2];
+      const d = (2 + rm / 256) * dr * dr + 4 * dg * dg + (2 + (255 - rm) / 256) * db * db;   // "redmean" distance
+      if (d < bd) { bd = d; best = j; }
+    }
+    m[i] = best;
+  }
+  return m;
+}
